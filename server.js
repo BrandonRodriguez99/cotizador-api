@@ -1141,10 +1141,13 @@ app.get("/api/cotizaciones/generate/folio", async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.get("/api/cotizaciones", async (req, res) => {
+app.get("/api/cotizaciones", autenticar, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
-    const result = await pool.request().query(`
+    const soloMias = req.usuario.rol === 'empleado';
+    const request = pool.request();
+    if (soloMias) request.input("nombre", sql.NVarChar(150), req.usuario.nombre);
+    const result = await request.query(`
       SELECT c.*,
         cl.Nombre AS Cliente,
         cu.Nombre AS Curso,
@@ -1155,6 +1158,7 @@ app.get("/api/cotizaciones", async (req, res) => {
       LEFT JOIN Cursos cu      ON c.CursoId     = cu.CursoId
       LEFT JOIN Coaches co     ON c.CoachId     = co.CoachId
       LEFT JOIN Modalidades m  ON c.ModalidadId = m.ModalidadId
+      ${soloMias ? "WHERE c.CreadoPor = @nombre" : ""}
       ORDER BY c.FechaCreacion DESC, c.CotizacionId DESC
     `);
     res.json(result.recordset);
@@ -1444,14 +1448,18 @@ app.post("/api/cotizaciones/:id/aprobar", autenticar, async (req, res) => {
 });
 
 // ─── ORDENES DE COMPRA ────────────────────────────────────────────────────────
-app.get("/api/ordenescompra", async (req, res) => {
+app.get("/api/ordenescompra", autenticar, async (req, res) => {
   try {
+    const soloMias = req.usuario.rol === 'empleado';
+    const reqOrd = pool.request();
+    if (soloMias) reqOrd.input("nombre", sql.NVarChar(150), req.usuario.nombre);
     const [ordResult, aprobResult] = await Promise.all([
-      pool.request().query(`
+      reqOrd.query(`
         SELECT oc.*, u.Nombre AS UnidadNegocio, p.Nombre AS Proveedor
         FROM OrdenesCompra oc
         INNER JOIN UnidadesNegocio u ON oc.UnidadNegocioId = u.UnidadNegocioId
         INNER JOIN Proveedores p ON oc.ProveedorId = p.ProveedorId
+        ${soloMias ? "WHERE oc.CreadoPor = @nombre" : ""}
         ORDER BY oc.Fecha DESC, oc.OrdenCompraId DESC
       `),
       pool.request().query(`
