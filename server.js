@@ -169,6 +169,10 @@ sql
           IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.OrdenesCompra') AND name='Tipo')
             ALTER TABLE dbo.OrdenesCompra ADD Tipo NVARCHAR(20) NOT NULL CONSTRAINT DF_OC_Tipo DEFAULT 'compras';
 
+          -- Soft delete en OrdenesCompra
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.OrdenesCompra') AND name='Activo')
+            ALTER TABLE dbo.OrdenesCompra ADD Activo BIT NOT NULL CONSTRAINT DF_OC_Activo DEFAULT 1;
+
           -- Columnas extendidas para SolicitudesFondos (datos de pago)
           IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.SolicitudesFondos') AND name='Terminal')
             ALTER TABLE dbo.SolicitudesFondos ADD Terminal NVARCHAR(100) NULL;
@@ -604,9 +608,10 @@ const insertOrderWithDetails = async (data) => {
 };
 
 const generateOrderFolio = async () => {
-  const result = await pool.request().query(`SELECT COUNT(*) AS Total FROM OrdenesCompra`);
-  const nextNumber = (result.recordset[0]?.Total || 0) + 1;
-  return `OC-${String(nextNumber).padStart(6, "0")}`;
+  const year = new Date().getFullYear();
+  const result = await pool.request().query(`SELECT ISNULL(MAX(OrdenCompraId), 0) AS MaxId FROM OrdenesCompra`);
+  const nextNumber = (result.recordset[0]?.MaxId || 0) + 1;
+  return `OC-${year}-${String(nextNumber).padStart(6, "0")}`;
 };
 
 // ─── Middleware JWT ───────────────────────────────────────────────────────────
@@ -1459,7 +1464,7 @@ app.get("/api/ordenescompra", autenticar, async (req, res) => {
         FROM OrdenesCompra oc
         INNER JOIN UnidadesNegocio u ON oc.UnidadNegocioId = u.UnidadNegocioId
         INNER JOIN Proveedores p ON oc.ProveedorId = p.ProveedorId
-        ${soloMias ? "WHERE oc.CreadoPor = @nombre" : ""}
+        WHERE oc.Activo = 1 ${soloMias ? "AND oc.CreadoPor = @nombre" : ""}
         ORDER BY oc.Fecha DESC, oc.OrdenCompraId DESC
       `),
       pool.request().query(`
@@ -1509,6 +1514,20 @@ app.post("/api/ordenescompra", async (req, res) => {
     });
     res.status(201).json({ id: orderId });
   } catch (err) { console.log("❌ ERROR CREAR ORDEN DE COMPRA:", err); res.status(500).json({ error: err.message || 'Error interno del servidor' }); }
+});
+
+app.delete("/api/ordenescompra/:id", autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const { rol } = req.usuario;
+    if (rol !== 'admin' && rol !== 'autorizador1' && rol !== 'autorizador2') {
+      return res.status(403).json({ error: 'Sin permisos para eliminar órdenes de compra' });
+    }
+    await pool.request()
+      .input("id", sql.Int, req.params.id)
+      .query("UPDATE dbo.OrdenesCompra SET Activo = 0 WHERE OrdenCompraId = @id");
+    res.sendStatus(204);
+  } catch (err) { console.log("❌ ERROR ELIMINAR OC:", err); res.status(500).json({ error: err.message }); }
 });
 
 app.put("/api/ordenescompra/:id", async (req, res) => {
