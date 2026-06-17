@@ -381,7 +381,7 @@ async function getEmailsDeRol(rol) {
   try {
     const r = await pool.request()
       .input("rol", sql.NVarChar(50), rol)
-      .query("SELECT Correo FROM dbo.Usuarios WHERE Rol=@rol AND Activo=1");
+      .query("SELECT DISTINCT Correo FROM dbo.Usuarios WHERE (Rol=@rol OR Rol='admin') AND Activo=1");
     return r.recordset.map((u) => u.Correo);
   } catch { return []; }
 }
@@ -444,6 +444,64 @@ function emailCotizacionPendiente(folio, cliente, curso, total, creadoPor) {
       </table>
       <a href="${APP_URL}" style="display:inline-block;padding:12px 24px;background:#1e3a5f;color:white;text-decoration:none;border-radius:6px">
         Ingresar al sistema para autorizar
+      </a>
+    </div>`;
+}
+
+function emailOCConfirmacion(folio, proveedor, total) {
+  return `
+    <div style="font-family:sans-serif;max-width:600px;margin:0 auto">
+      <h2 style="color:#1e3a5f">Orden de Compra Registrada</h2>
+      <p>Tu orden de compra ha sido registrada exitosamente y está <strong>pendiente de aprobación</strong>.</p>
+      <table style="width:100%;border-collapse:collapse;margin:16px 0">
+        <tr><td style="padding:8px;font-weight:bold;background:#f3f4f6">Folio</td><td style="padding:8px">${folio}</td></tr>
+        <tr><td style="padding:8px;font-weight:bold">Proveedor</td><td style="padding:8px">${proveedor}</td></tr>
+        <tr><td style="padding:8px;font-weight:bold;background:#f3f4f6">Total</td><td style="padding:8px">$${Number(total).toFixed(2)}</td></tr>
+      </table>
+      <p style="color:#6b7280;font-size:13px">Recibirás una notificación cuando sea aprobada o rechazada.</p>
+      <a href="${APP_URL}" style="display:inline-block;padding:12px 24px;background:#1e3a5f;color:white;text-decoration:none;border-radius:6px">
+        Ver en el sistema
+      </a>
+    </div>`;
+}
+
+function emailOCResultado(folio, proveedor, total, aprobada, aprobador, motivo) {
+  const color = aprobada ? '#15803d' : '#b91c1c';
+  const bg    = aprobada ? '#f0fdf4' : '#fef2f2';
+  return `
+    <div style="font-family:sans-serif;max-width:600px;margin:0 auto">
+      <h2 style="color:${color}">Orden ${folio} — ${aprobada ? 'Aprobada' : 'Rechazada'}</h2>
+      <div style="background:${bg};border-radius:8px;padding:16px;margin-bottom:16px">
+        <p style="margin:0;color:${color};font-weight:600">
+          ${aprobada ? '✅ Tu orden de compra ha sido completamente aprobada.' : '❌ Tu orden de compra ha sido rechazada.'}
+        </p>
+      </div>
+      <table style="width:100%;border-collapse:collapse;margin:16px 0">
+        <tr><td style="padding:8px;font-weight:bold;background:#f3f4f6">Folio</td><td style="padding:8px">${folio}</td></tr>
+        <tr><td style="padding:8px;font-weight:bold">Proveedor</td><td style="padding:8px">${proveedor}</td></tr>
+        <tr><td style="padding:8px;font-weight:bold;background:#f3f4f6">Total</td><td style="padding:8px">$${Number(total).toFixed(2)}</td></tr>
+        <tr><td style="padding:8px;font-weight:bold">Revisado por</td><td style="padding:8px">${aprobador || '-'}</td></tr>
+        ${motivo ? `<tr><td style="padding:8px;font-weight:bold;background:#f3f4f6">Motivo de rechazo</td><td style="padding:8px">${motivo}</td></tr>` : ''}
+      </table>
+      <a href="${APP_URL}" style="display:inline-block;padding:12px 24px;background:#1e3a5f;color:white;text-decoration:none;border-radius:6px">
+        Ver en el sistema
+      </a>
+    </div>`;
+}
+
+function emailCotizacionConfirmacion(folio, total, creadoPor) {
+  return `
+    <div style="font-family:sans-serif;max-width:600px;margin:0 auto">
+      <h2 style="color:#1e3a5f">Cotización Registrada</h2>
+      <p>Tu cotización ha sido registrada y está <strong>pendiente de aprobación</strong> por el autorizador.</p>
+      <table style="width:100%;border-collapse:collapse;margin:16px 0">
+        <tr><td style="padding:8px;font-weight:bold;background:#f3f4f6">Folio</td><td style="padding:8px">${folio}</td></tr>
+        <tr><td style="padding:8px;font-weight:bold">Creado por</td><td style="padding:8px">${creadoPor || '-'}</td></tr>
+        <tr><td style="padding:8px;font-weight:bold;background:#f3f4f6">Total con ganancia</td><td style="padding:8px">$${Number(total || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })}</td></tr>
+      </table>
+      <p style="color:#6b7280;font-size:13px">Recibirás una notificación cuando sea aprobada o rechazada.</p>
+      <a href="${APP_URL}" style="display:inline-block;padding:12px 24px;background:#1e3a5f;color:white;text-decoration:none;border-radius:6px">
+        Ver en el sistema
       </a>
     </div>`;
 }
@@ -639,6 +697,23 @@ function soloAdmin(req, res, next) {
 app.get("/", (req, res) => res.send("API funcionando"));
 
 // ─── AUTH ─────────────────────────────────────────────────────────────────────
+app.get("/api/auth/me", autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const result = await pool.request()
+      .input("id", sql.Int, req.usuario.id)
+      .query("SELECT UsuarioId, Correo, Nombre, Rol, DebeReiniciarPass, Activo FROM dbo.Usuarios WHERE UsuarioId=@id AND Activo=1");
+    if (!result.recordset[0]) return res.status(404).json({ error: "Usuario no encontrado" });
+    const u = result.recordset[0];
+    const newToken = jwt.sign(
+      { id: u.UsuarioId, correo: u.Correo, nombre: u.Nombre, rol: u.Rol },
+      JWT_SECRET,
+      { expiresIn: "8h" }
+    );
+    res.json({ token: newToken, usuario: { id: u.UsuarioId, correo: u.Correo, nombre: u.Nombre, rol: u.Rol, debeReiniciarPass: u.DebeReiniciarPass } });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.post("/api/auth/login", async (req, res) => {
   try {
     if (!ensurePool(res)) return;
@@ -1349,15 +1424,20 @@ app.post("/api/cotizaciones", async (req, res) => {
 
       res.status(201).json({ cotizacionId, id: cotizacionId });
 
-      // Notificar por correo al autorizador1 (sin bloquear la respuesta)
-      getEmailsDeRol("autorizador1").then(emails => {
-        if (emails.length) {
-          console.log(`📧 Notificando cotización ${d.folio} a autorizador1 (${emails.length} usuario(s))`);
-          sendMail(
-            emails,
-            `Nueva cotización ${d.folio} requiere su aprobación`,
-            emailCotizacionPendiente(d.folio, null, null, d.totalConGanancia, d.creadoPor)
-          );
+      // Notificar al autorizador1 y al creador (sin bloquear la respuesta)
+      Promise.all([
+        getEmailsDeRol("autorizador1"),
+        getEmailDeUsuario(d.creadoPor),
+      ]).then(([emailsAut, emailsCreador]) => {
+        if (emailsAut.length) {
+          console.log(`📧 Cotización ${d.folio} → autorizador1`);
+          sendMail(emailsAut, `Nueva cotización ${d.folio} requiere su aprobación`,
+            emailCotizacionPendiente(d.folio, null, null, d.totalConGanancia, d.creadoPor));
+        }
+        if (emailsCreador.length) {
+          console.log(`📧 Cotización ${d.folio} → creador (${d.creadoPor})`);
+          sendMail(emailsCreador, `Tu cotización ${d.folio} fue registrada y está pendiente de aprobación`,
+            emailCotizacionConfirmacion(d.folio, d.totalConGanancia, d.creadoPor));
         }
       }).catch(() => {});
     } catch (err) {
@@ -1464,7 +1544,7 @@ app.get("/api/ordenescompra", autenticar, async (req, res) => {
         FROM OrdenesCompra oc
         INNER JOIN UnidadesNegocio u ON oc.UnidadNegocioId = u.UnidadNegocioId
         INNER JOIN Proveedores p ON oc.ProveedorId = p.ProveedorId
-        WHERE oc.Activo = 1 ${soloMias ? "AND oc.CreadoPor = @nombre" : ""}
+        WHERE oc.Activo = 1 ${soloMias ? "AND oc.Creador = @nombre" : ""}
         ORDER BY oc.Fecha DESC, oc.OrdenCompraId DESC
       `),
       pool.request().query(`
@@ -1503,16 +1583,27 @@ app.get("/api/ordenescompra/:id", async (req, res) => {
 app.post("/api/ordenescompra", async (req, res) => {
   try {
     if (!ensurePool(res)) return;
-    const orderId = await insertOrderWithDetails(req.body);
-    const folio    = req.body.Folio || req.body.folio || "";
-    const proveedor= req.body.Proveedor || req.body.proveedor || "";
-    const total    = req.body.Total || req.body.total || 0;
-    // Notificación async (no bloquea la respuesta)
-    getEmailsDeRol("autorizador1").then((emails) => {
-      console.log(`📧 Notificando orden ${folio} a autorizador1 (${emails.length} usuario(s)): [${emails.join(", ")}]`);
-      sendMail(emails, `Nueva orden ${folio} requiere su autorización`, emailOrdenCreada(folio, proveedor, total));
-    });
+    const orderId   = await insertOrderWithDetails(req.body);
+    const folio     = req.body.Folio    || req.body.folio    || "";
+    const proveedor = req.body.Proveedor|| req.body.proveedor|| "";
+    const total     = req.body.Total    || req.body.total    || 0;
+    const creador   = req.body.Creador  || req.body.creador  || "";
     res.status(201).json({ id: orderId });
+    // Notificaciones async
+    Promise.all([
+      getEmailsDeRol("autorizador1"),
+      getEmailDeUsuario(creador),
+    ]).then(([emailsAut, emailsCreador]) => {
+      if (emailsAut.length) {
+        console.log(`📧 OC ${folio} → autorizador1`);
+        sendMail(emailsAut, `Nueva orden ${folio} requiere su autorización`, emailOrdenCreada(folio, proveedor, total));
+      }
+      if (emailsCreador.length) {
+        console.log(`📧 OC ${folio} → creador (${creador})`);
+        sendMail(emailsCreador, `Tu orden de compra ${folio} fue registrada y está pendiente de aprobación`,
+          emailOCConfirmacion(folio, proveedor, total));
+      }
+    }).catch(() => {});
   } catch (err) { console.log("❌ ERROR CREAR ORDEN DE COMPRA:", err); res.status(500).json({ error: err.message || 'Error interno del servidor' }); }
 });
 
@@ -1646,22 +1737,25 @@ app.post("/api/ordenescompra/:id/aprobar", autenticar, async (req, res) => {
 
     // Obtener datos de la orden para el email
     const orderRes = await pool.request().input("id", sql.Int, orderId).query(`
-      SELECT oc.Folio, oc.Total, p.Nombre AS Proveedor
+      SELECT oc.Folio, oc.Total, oc.Creador, p.Nombre AS Proveedor
       FROM OrdenesCompra oc INNER JOIN Proveedores p ON oc.ProveedorId=p.ProveedorId
       WHERE oc.OrdenCompraId=@id
     `);
     const order = orderRes.recordset[0];
     if (order) {
       if (paso === 1) {
-        // Notificar a autorizador2
         getEmailsDeRol("autorizador2").then((emails) =>
           sendMail(emails, `Orden ${order.Folio} aprobada — requiere su autorización`,
             emailPasoAprobado(order.Folio, order.Proveedor, order.Total, 1))
         );
       } else if (paso === 2) {
-        // Notificar al solicitante (creator) que la orden fue totalmente aprobada
-        getEmailsDeRol("empleado").then(() => {}); // placeholder
-        console.log(`✅ Orden ${order.Folio} completamente aprobada`);
+        getEmailDeUsuario(order.Creador).then((emails) => {
+          if (emails.length) {
+            console.log(`📧 OC ${order.Folio} completamente aprobada → creador (${order.Creador})`);
+            sendMail(emails, `Tu orden de compra ${order.Folio} fue aprobada`,
+              emailOCResultado(order.Folio, order.Proveedor, order.Total, true, aprobador, null));
+          }
+        }).catch(() => {});
       }
     }
 
@@ -1687,6 +1781,23 @@ app.post("/api/ordenescompra/:id/rechazar", autenticar, async (req, res) => {
               WHERE OrdenCompraId=@id`);
 
     res.json({ ok: true });
+
+    // Notificar al creador
+    const orderRes = await pool.request().input("id", sql.Int, orderId).query(`
+      SELECT oc.Folio, oc.Total, oc.Creador, p.Nombre AS Proveedor
+      FROM OrdenesCompra oc INNER JOIN Proveedores p ON oc.ProveedorId=p.ProveedorId
+      WHERE oc.OrdenCompraId=@id
+    `);
+    const order = orderRes.recordset[0];
+    if (order) {
+      getEmailDeUsuario(order.Creador).then((emails) => {
+        if (emails.length) {
+          console.log(`📧 OC ${order.Folio} rechazada → creador (${order.Creador})`);
+          sendMail(emails, `Tu orden de compra ${order.Folio} fue rechazada`,
+            emailOCResultado(order.Folio, order.Proveedor, order.Total, false, aprobador, motivo));
+        }
+      }).catch(() => {});
+    }
   } catch (err) {
     console.log("❌ ERROR RECHAZAR ORDEN:", err);
     res.status(500).json({ error: err.message || "Error al rechazar" });
