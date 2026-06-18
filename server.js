@@ -173,6 +173,14 @@ sql
           IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.OrdenesCompra') AND name='Activo')
             ALTER TABLE dbo.OrdenesCompra ADD Activo BIT NOT NULL CONSTRAINT DF_OC_Activo DEFAULT 1;
 
+          -- Columnas adicionales en Cursos
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Cursos') AND name='Costo')
+            ALTER TABLE dbo.Cursos ADD Costo DECIMAL(18,2) NULL;
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Cursos') AND name='Horas')
+            ALTER TABLE dbo.Cursos ADD Horas DECIMAL(10,2) NULL;
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Cursos') AND name='TipoCurso')
+            ALTER TABLE dbo.Cursos ADD TipoCurso NVARCHAR(50) NULL;
+
           -- Columnas extendidas para SolicitudesFondos (datos de pago)
           IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.SolicitudesFondos') AND name='Terminal')
             ALTER TABLE dbo.SolicitudesFondos ADD Terminal NVARCHAR(100) NULL;
