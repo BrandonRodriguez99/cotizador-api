@@ -1472,16 +1472,103 @@ app.delete("/api/cotizaciones/:id", autenticar, async (req, res) => {
   } catch (err) { console.log("❌ ERROR ELIMINAR COTIZACIÓN:", err); res.status(500).json({ error: err.message }); }
 });
 
-app.put("/api/cotizaciones/:id", async (req, res) => {
+app.put("/api/cotizaciones/:id", autenticar, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
     const d = req.body, id = Number(req.params.id);
-    await pool.request()
-      .input("id",     sql.Int,           id)
-      .input("Estado", sql.NVarChar(50),  d.estado || "Borrador")
-      .query("UPDATE Cotizaciones SET Estado = @Estado WHERE CotizacionId = @id");
+    const costos = d.costos || [];
+    const participantes = d.participantes || [];
+
+    const schemaCheck = await pool.request().query(`
+      SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_NAME='Cotizaciones' AND COLUMN_NAME IN (
+        'ClienteId','CursoId','CoachId','ModalidadId',
+        'MargenUtilidadPctDirectos','MargenUtilidadDirectos',
+        'MargenUtilidadPctIndirectos','MargenUtilidadIndirectos'
+      )
+    `);
+    const existingCols = new Set(schemaCheck.recordset.map(r => r.COLUMN_NAME));
+
+    const setParts = [
+      "DuracionDias=@DuracionDias","SesionesPorDia=@SesionesPorDia",
+      "ParticipantesCantidad=@ParticipantesCantidad",
+      "FechaInicio=@FechaInicio","FechaFin=@FechaFin","Observaciones=@Observaciones",
+      "TotalCostosDirectos=@TotalCostosDirectos","TotalCostosIndirectos=@TotalCostosIndirectos",
+      "TotalCostos=@TotalCostos","MargenUtilidadPct=@MargenUtilidadPct",
+      "MargenUtilidad=@MargenUtilidad","TotalConGanancia=@TotalConGanancia",
+      "PrecioPorParticipante=@PrecioPorParticipante",
+      "PrecioSugeridoPorParticipante=@PrecioSugeridoPorParticipante",
+    ];
+
+    const req1 = pool.request()
+      .input("id",                            sql.Int,               id)
+      .input("DuracionDias",                  sql.Int,               d.duracionDias          || null)
+      .input("SesionesPorDia",                sql.Int,               d.sesionesPorDia        || null)
+      .input("ParticipantesCantidad",         sql.Int,               d.participantesCantidad || null)
+      .input("FechaInicio",                   sql.Date,              d.fechaInicio           || null)
+      .input("FechaFin",                      sql.Date,              d.fechaFin              || null)
+      .input("Observaciones",                 sql.NVarChar(sql.MAX), d.observaciones         || null)
+      .input("TotalCostosDirectos",           sql.Decimal(18,2),     d.totalCostosDirectos   || 0)
+      .input("TotalCostosIndirectos",         sql.Decimal(18,2),     d.totalCostosIndirectos || 0)
+      .input("TotalCostos",                   sql.Decimal(18,2),     d.totalCostos           || 0)
+      .input("MargenUtilidadPct",             sql.Decimal(18,4),     d.margenUtilidadPct     || 0)
+      .input("MargenUtilidad",                sql.Decimal(18,2),     d.margenUtilidad        || 0)
+      .input("TotalConGanancia",              sql.Decimal(18,2),     d.totalConGanancia      || 0)
+      .input("PrecioPorParticipante",         sql.Decimal(18,2),     d.precioPorParticipante || 0)
+      .input("PrecioSugeridoPorParticipante", sql.Decimal(18,2),     d.precioSugeridoPorParticipante || 0);
+
+    if (d.clienteId   && existingCols.has("ClienteId"))   { setParts.push("ClienteId=@ClienteId");     req1.input("ClienteId",   sql.Int, Number(d.clienteId));   }
+    if (d.cursoId     && existingCols.has("CursoId"))     { setParts.push("CursoId=@CursoId");         req1.input("CursoId",     sql.Int, Number(d.cursoId));     }
+    if (d.coachId     && existingCols.has("CoachId"))     { setParts.push("CoachId=@CoachId");         req1.input("CoachId",     sql.Int, Number(d.coachId));     }
+    if (d.modalidadId && existingCols.has("ModalidadId")) { setParts.push("ModalidadId=@ModalidadId"); req1.input("ModalidadId", sql.Int, Number(d.modalidadId)); }
+    if (existingCols.has("MargenUtilidadPctDirectos"))   { setParts.push("MargenUtilidadPctDirectos=@MargenUtilidadPctDirectos");    req1.input("MargenUtilidadPctDirectos",   sql.Decimal(18,4), d.margenUtilidadPctDirectos   ?? null); }
+    if (existingCols.has("MargenUtilidadDirectos"))      { setParts.push("MargenUtilidadDirectos=@MargenUtilidadDirectos");          req1.input("MargenUtilidadDirectos",      sql.Decimal(18,2), d.margenUtilidadDirectos      ?? null); }
+    if (existingCols.has("MargenUtilidadPctIndirectos")) { setParts.push("MargenUtilidadPctIndirectos=@MargenUtilidadPctIndirectos"); req1.input("MargenUtilidadPctIndirectos", sql.Decimal(18,4), d.margenUtilidadPctIndirectos  ?? null); }
+    if (existingCols.has("MargenUtilidadIndirectos"))    { setParts.push("MargenUtilidadIndirectos=@MargenUtilidadIndirectos");      req1.input("MargenUtilidadIndirectos",    sql.Decimal(18,2), d.margenUtilidadIndirectos    ?? null); }
+
+    await req1.query(`UPDATE Cotizaciones SET ${setParts.join(",")} WHERE CotizacionId=@id`);
+
+    await pool.request().input("id", sql.Int, id)
+      .query("DELETE FROM CotizacionParticipantes WHERE CotizacionId=@id");
+    for (const p of participantes) {
+      await pool.request()
+        .input("CotizacionId",   sql.Int,               id)
+        .input("EmpleadoId",     sql.Int,               p.empleadoId     || null)
+        .input("NombreCompleto", sql.NVarChar(300),     p.nombreCompleto || null)
+        .input("Empresa",        sql.NVarChar(200),     p.empresa        || null)
+        .input("Factura2",       sql.NVarChar(200),     p.factura2       || null)
+        .input("Factura3",       sql.NVarChar(200),     p.factura3       || null)
+        .input("Observaciones",  sql.NVarChar(sql.MAX), p.observaciones  || null)
+        .query(`INSERT INTO CotizacionParticipantes
+          (CotizacionId,EmpleadoId,NombreCompleto,Empresa,Factura2,Factura3,Observaciones)
+          VALUES(@CotizacionId,@EmpleadoId,@NombreCompleto,@Empresa,@Factura2,@Factura3,@Observaciones)`);
+    }
+
+    try {
+      await pool.request().input("id", sql.Int, id)
+        .query("DELETE FROM CotizacionCostos WHERE CotizacionId=@id");
+      for (let i = 0; i < costos.length; i++) {
+        const c = costos[i];
+        await pool.request()
+          .input("CotizacionId",  sql.Int,           id)
+          .input("Concepto",      sql.NVarChar(200),  c.concepto    || null)
+          .input("TipoCalculo",   sql.NVarChar(100),  c.tipoCalculo || null)
+          .input("Formula",       sql.NVarChar(200),  c.formula     || null)
+          .input("TipoCosto",     sql.NVarChar(100),  c.tipoCosto   || null)
+          .input("CostoUnitario", sql.Decimal(18,2),  Number(c.costoUnitario) || 0)
+          .input("Cantidad",      sql.NVarChar(50),   String(c.cantidad ?? ""))
+          .input("Total",         sql.Decimal(18,2),  Number(c.total) || 0)
+          .input("Orden",         sql.Int,            c.orden || i + 1)
+          .query(`INSERT INTO CotizacionCostos
+            (CotizacionId,Concepto,TipoCalculo,Formula,TipoCosto,CostoUnitario,Cantidad,Total,Orden)
+            VALUES(@CotizacionId,@Concepto,@TipoCalculo,@Formula,@TipoCosto,@CostoUnitario,@Cantidad,@Total,@Orden)`);
+      }
+    } catch (costErr) {
+      console.log("⚠️ Error actualizando costos:", costErr.message);
+    }
+
     res.sendStatus(204);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.log("❌ ERROR ACTUALIZAR COTIZACIÓN:", err); res.status(500).json({ error: err.message }); }
 });
 
 app.post("/api/cotizaciones/:id/enviar", async (req, res) => {
