@@ -172,6 +172,10 @@ sql
             );
           END
 
+          -- Columna TipoCosto en CotizacionCostos (puede que la tabla ya exista sin ella)
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.CotizacionCostos') AND name='TipoCosto')
+            ALTER TABLE dbo.CotizacionCostos ADD TipoCosto NVARCHAR(100) NULL;
+
           -- Columnas de margen desglosado en Cotizaciones
           IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Cotizaciones') AND name='MargenUtilidadPctDirectos')
             ALTER TABLE dbo.Cotizaciones ADD MargenUtilidadPctDirectos DECIMAL(18,4) NULL;
