@@ -141,6 +141,37 @@ sql
             );
           END
 
+          -- Tablas de costos y participantes de cotizaciones (si no existen)
+          IF OBJECT_ID('dbo.CotizacionCostos','U') IS NULL
+          BEGIN
+            CREATE TABLE dbo.CotizacionCostos (
+              CotizacionCostoId INT IDENTITY(1,1) PRIMARY KEY,
+              CotizacionId INT NOT NULL,
+              Concepto NVARCHAR(200) NULL,
+              TipoCalculo NVARCHAR(100) NULL,
+              Formula NVARCHAR(200) NULL,
+              TipoCosto NVARCHAR(100) NULL,
+              CostoUnitario DECIMAL(18,2) NOT NULL DEFAULT 0,
+              Cantidad NVARCHAR(50) NULL,
+              Total DECIMAL(18,2) NOT NULL DEFAULT 0,
+              Orden INT NOT NULL DEFAULT 0
+            );
+          END
+
+          IF OBJECT_ID('dbo.CotizacionParticipantes','U') IS NULL
+          BEGIN
+            CREATE TABLE dbo.CotizacionParticipantes (
+              CotizacionParticipanteId INT IDENTITY(1,1) PRIMARY KEY,
+              CotizacionId INT NOT NULL,
+              EmpleadoId INT NULL,
+              NombreCompleto NVARCHAR(300) NULL,
+              Empresa NVARCHAR(200) NULL,
+              Factura2 NVARCHAR(200) NULL,
+              Factura3 NVARCHAR(200) NULL,
+              Observaciones NVARCHAR(MAX) NULL
+            );
+          END
+
           -- Columnas de margen desglosado en Cotizaciones
           IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Cotizaciones') AND name='MargenUtilidadPctDirectos')
             ALTER TABLE dbo.Cotizaciones ADD MargenUtilidadPctDirectos DECIMAL(18,4) NULL;
@@ -1479,6 +1510,15 @@ app.put("/api/cotizaciones/:id", autenticar, async (req, res) => {
     const costos = d.costos || [];
     const participantes = d.participantes || [];
 
+    // Solo el creador (o admin) puede editar
+    const cotCheck = await pool.request().input("id", sql.Int, id)
+      .query("SELECT CreadoPor FROM Cotizaciones WHERE CotizacionId=@id");
+    if (!cotCheck.recordset.length) return res.status(404).json({ error: "Cotización no encontrada" });
+    const creador = cotCheck.recordset[0].CreadoPor;
+    if (req.usuario.rol !== 'admin' && req.usuario.nombre !== creador) {
+      return res.status(403).json({ error: "Solo el creador puede editar esta cotización" });
+    }
+
     const schemaCheck = await pool.request().query(`
       SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
       WHERE TABLE_NAME='Cotizaciones' AND COLUMN_NAME IN (
@@ -1498,6 +1538,7 @@ app.put("/api/cotizaciones/:id", autenticar, async (req, res) => {
       "MargenUtilidad=@MargenUtilidad","TotalConGanancia=@TotalConGanancia",
       "PrecioPorParticipante=@PrecioPorParticipante",
       "PrecioSugeridoPorParticipante=@PrecioSugeridoPorParticipante",
+      "Estado='Pendiente'",
     ];
 
     const req1 = pool.request()
