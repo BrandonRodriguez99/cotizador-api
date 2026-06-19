@@ -216,6 +216,10 @@ sql
           IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Cursos') AND name='TipoCurso')
             ALTER TABLE dbo.Cursos ADD TipoCurso NVARCHAR(50) NULL;
 
+          -- Columna Costo en Coaches
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Coaches') AND name='Costo')
+            ALTER TABLE dbo.Coaches ADD Costo DECIMAL(18,2) NULL;
+
           -- Columnas extendidas para SolicitudesFondos (datos de pago)
           IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.SolicitudesFondos') AND name='Terminal')
             ALTER TABLE dbo.SolicitudesFondos ADD Terminal NVARCHAR(100) NULL;
@@ -1045,7 +1049,7 @@ app.delete("/api/catalogos/clientes/:id", async (req, res) => {
 
 app.get("/api/catalogos/coaches", async (req, res) => {
   try {
-    const result = await pool.request().query(`SELECT CoachId, Nombre FROM Coaches WHERE Activo = 1 ORDER BY Nombre`);
+    const result = await pool.request().query(`SELECT CoachId, Nombre, Costo FROM Coaches WHERE Activo = 1 ORDER BY Nombre`);
     res.json(result.recordset);
   } catch (err) { console.log("❌ ERROR COACHES:", err); res.status(500).json({ error: err.message || 'Error interno del servidor' }); }
 });
