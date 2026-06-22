@@ -1328,7 +1328,8 @@ app.get("/api/cotizaciones/:id", async (req, res) => {
     const cotRes = await pool.request().input("id", sql.Int, id).query(`
       SELECT c.*,
         cl.Nombre AS Cliente, cu.Nombre AS Curso,
-        co.Nombre AS Coach,  m.Nombre  AS Modalidad
+        co.Nombre AS Coach,  m.Nombre  AS Modalidad,
+        cu.Horas  AS HorasCurso
       FROM Cotizaciones c
       LEFT JOIN Empresas cl   ON c.ClienteId   = cl.EmpresaId
       LEFT JOIN Cursos cu     ON c.CursoId     = cu.CursoId
