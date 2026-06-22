@@ -220,6 +220,16 @@ sql
           IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Coaches') AND name='Costo')
             ALTER TABLE dbo.Coaches ADD Costo DECIMAL(18,2) NULL;
 
+          -- Hacer nullable las FKs de Cotizaciones (cursos Mandatorio no tienen CoachId)
+          IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Cotizaciones') AND name='CoachId' AND is_nullable=0)
+            ALTER TABLE dbo.Cotizaciones ALTER COLUMN CoachId INT NULL;
+          IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Cotizaciones') AND name='ClienteId' AND is_nullable=0)
+            ALTER TABLE dbo.Cotizaciones ALTER COLUMN ClienteId INT NULL;
+          IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Cotizaciones') AND name='CursoId' AND is_nullable=0)
+            ALTER TABLE dbo.Cotizaciones ALTER COLUMN CursoId INT NULL;
+          IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Cotizaciones') AND name='ModalidadId' AND is_nullable=0)
+            ALTER TABLE dbo.Cotizaciones ALTER COLUMN ModalidadId INT NULL;
+
           -- Columnas extendidas para SolicitudesFondos (datos de pago)
           IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.SolicitudesFondos') AND name='Terminal')
             ALTER TABLE dbo.SolicitudesFondos ADD Terminal NVARCHAR(100) NULL;
