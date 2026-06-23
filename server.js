@@ -208,6 +208,10 @@ sql
           IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.OrdenesCompra') AND name='Activo')
             ALTER TABLE dbo.OrdenesCompra ADD Activo BIT NOT NULL CONSTRAINT DF_OC_Activo DEFAULT 1;
 
+          -- Columna Destino en OrdenesCompra
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.OrdenesCompra') AND name='Destino')
+            ALTER TABLE dbo.OrdenesCompra ADD Destino NVARCHAR(100) NULL;
+
           -- Columnas adicionales en Cursos
           IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Cursos') AND name='Costo')
             ALTER TABLE dbo.Cursos ADD Costo DECIMAL(18,2) NULL;
@@ -653,6 +657,7 @@ const tableSchemas = {
   OrdenesCompra: {
     folio: "Folio", unidadnegocioid: "UnidadNegocioId",
     proveedorid: "ProveedorId", fecha: "Fecha", tipo: "Tipo",
+    destino: "Destino",
     observaciones: "Observaciones", subtotal: "Subtotal", iva: "Iva", total: "Total",
     creador: "Creador", rechazado: "Rechazado", rechazadopor: "RechazadoPor",
     fecharechazo: "FechaRechazo", motivorechazo: "MotivoRechazo",
