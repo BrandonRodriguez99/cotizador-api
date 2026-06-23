@@ -278,6 +278,40 @@ sql
           IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.SolicitudesFondos') AND name='FechaAprobacion2')
             ALTER TABLE dbo.SolicitudesFondos ADD FechaAprobacion2 DATETIME2 NULL;
 
+          -- Órdenes de Mantenimiento
+          IF OBJECT_ID('dbo.OrdenesMantenimiento','U') IS NULL
+            CREATE TABLE dbo.OrdenesMantenimiento (
+              OrdenMantenimientoId INT IDENTITY(1,1) PRIMARY KEY,
+              Folio              NVARCHAR(50)   NULL,
+              Departamento       NVARCHAR(200)  NULL,
+              FechaReporte       DATE           NULL,
+              NombreSolicita     NVARCHAR(300)  NULL,
+              Puesto             NVARCHAR(200)  NULL,
+              Equipo             NVARCHAR(200)  NULL,
+              Codigo             NVARCHAR(100)  NULL,
+              RazonOrden         NVARCHAR(100)  NULL,
+              DescripcionFalla   NVARCHAR(MAX)  NULL,
+              TipoFalla          NVARCHAR(100)  NULL,
+              FechaTerminacion   DATE           NULL,
+              DescripcionMantenimiento NVARCHAR(MAX) NULL,
+              TecnicoResponsable NVARCHAR(300)  NULL,
+              UsuarioEquipo      NVARCHAR(300)  NULL,
+              Estado             NVARCHAR(50)   NOT NULL DEFAULT 'Pendiente',
+              CreadoPor          NVARCHAR(150)  NULL,
+              FechaCreacion      DATETIME2      NOT NULL DEFAULT SYSUTCDATETIME(),
+              OrdenCompraId      INT            NULL,
+              Activo             BIT            NOT NULL DEFAULT 1
+            );
+
+          IF OBJECT_ID('dbo.OrdenesMantenimientoMateriales','U') IS NULL
+            CREATE TABLE dbo.OrdenesMantenimientoMateriales (
+              MaterialId              INT IDENTITY(1,1) PRIMARY KEY,
+              OrdenMantenimientoId    INT NOT NULL,
+              Material                NVARCHAR(500) NULL,
+              Cantidad                NVARCHAR(100) NULL,
+              FOREIGN KEY (OrdenMantenimientoId) REFERENCES dbo.OrdenesMantenimiento(OrdenMantenimientoId)
+            );
+
           IF OBJECT_ID('dbo.OrdenesCompraFacturas','U') IS NULL
           BEGIN
             CREATE TABLE dbo.OrdenesCompraFacturas (
@@ -2737,6 +2771,106 @@ app.get("/api/ordenescompra/:id/evaluacion", autenticar, async (req, res) => {
       result[row.Tipo] = row;
     }
     res.json(result);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ─── ÓRDENES DE MANTENIMIENTO ─────────────────────────────────────────────────
+app.get('/api/ordenes-mantenimiento', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const r = await pool.request().query(`
+      SELECT om.*, oc.Folio AS FolioOC
+      FROM OrdenesMantenimiento om
+      LEFT JOIN OrdenesCompra oc ON om.OrdenCompraId = oc.OrdenCompraId
+      WHERE om.Activo = 1
+      ORDER BY om.FechaCreacion DESC
+    `);
+    res.json(r.recordset);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/ordenes-mantenimiento/:id', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const id = Number(req.params.id);
+    const omRes = await pool.request().input('id', sql.Int, id).query(`
+      SELECT om.*, oc.Folio AS FolioOC
+      FROM OrdenesMantenimiento om
+      LEFT JOIN OrdenesCompra oc ON om.OrdenCompraId = oc.OrdenCompraId
+      WHERE om.OrdenMantenimientoId = @id AND om.Activo = 1
+    `);
+    if (!omRes.recordset.length) return res.status(404).json({ error: 'No encontrada' });
+    const mat = await pool.request().input('id', sql.Int, id).query(`
+      SELECT * FROM OrdenesMantenimientoMateriales WHERE OrdenMantenimientoId = @id
+    `);
+    res.json({ orden: omRes.recordset[0], materiales: mat.recordset });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/ordenes-mantenimiento', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const d = req.body;
+    const r = await pool.request()
+      .input('Departamento',     sql.NVarChar(200),  d.departamento     || null)
+      .input('FechaReporte',     sql.Date,            d.fechaReporte     || null)
+      .input('NombreSolicita',   sql.NVarChar(300),   d.nombreSolicita   || null)
+      .input('Puesto',           sql.NVarChar(200),   d.puesto           || null)
+      .input('Equipo',           sql.NVarChar(200),   d.equipo           || null)
+      .input('Codigo',           sql.NVarChar(100),   d.codigo           || null)
+      .input('RazonOrden',       sql.NVarChar(100),   d.razonOrden       || null)
+      .input('DescripcionFalla', sql.NVarChar(sql.MAX), d.descripcionFalla || null)
+      .input('CreadoPor',        sql.NVarChar(150),   d.creadoPor        || null)
+      .query(`
+        INSERT INTO OrdenesMantenimiento
+          (Departamento,FechaReporte,NombreSolicita,Puesto,Equipo,Codigo,RazonOrden,DescripcionFalla,CreadoPor,Estado)
+        VALUES
+          (@Departamento,@FechaReporte,@NombreSolicita,@Puesto,@Equipo,@Codigo,@RazonOrden,@DescripcionFalla,@CreadoPor,'Pendiente');
+        SELECT SCOPE_IDENTITY() AS id;
+      `);
+    const newId = r.recordset[0].id;
+    const year  = new Date().getFullYear();
+    const folio = `OM-${year}-${String(newId).padStart(6, '0')}`;
+    await pool.request().input('folio', sql.NVarChar(50), folio).input('id', sql.Int, newId)
+      .query('UPDATE OrdenesMantenimiento SET Folio=@folio WHERE OrdenMantenimientoId=@id');
+    res.json({ id: newId, folio });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/ordenes-mantenimiento/:id', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const id = Number(req.params.id);
+    const d = req.body;
+    await pool.request()
+      .input('id',                      sql.Int,              id)
+      .input('TipoFalla',               sql.NVarChar(100),    d.tipoFalla               || null)
+      .input('FechaTerminacion',        sql.Date,             d.fechaTerminacion        || null)
+      .input('DescripcionMantenimiento',sql.NVarChar(sql.MAX),d.descripcionMantenimiento|| null)
+      .input('TecnicoResponsable',      sql.NVarChar(300),    d.tecnicoResponsable      || null)
+      .input('UsuarioEquipo',           sql.NVarChar(300),    d.usuarioEquipo           || null)
+      .input('Estado',                  sql.NVarChar(50),     d.estado                  || 'En proceso')
+      .query(`
+        UPDATE OrdenesMantenimiento SET
+          TipoFalla=@TipoFalla, FechaTerminacion=@FechaTerminacion,
+          DescripcionMantenimiento=@DescripcionMantenimiento,
+          TecnicoResponsable=@TecnicoResponsable, UsuarioEquipo=@UsuarioEquipo,
+          Estado=@Estado
+        WHERE OrdenMantenimientoId=@id
+      `);
+    // Replace materiales
+    await pool.request().input('id', sql.Int, id)
+      .query('DELETE FROM OrdenesMantenimientoMateriales WHERE OrdenMantenimientoId=@id');
+    const materiales = d.materiales || [];
+    for (const m of materiales) {
+      if (!m.material?.trim()) continue;
+      await pool.request()
+        .input('oid', sql.Int, id)
+        .input('mat', sql.NVarChar(500), m.material)
+        .input('qty', sql.NVarChar(100), m.cantidad || '')
+        .query('INSERT INTO OrdenesMantenimientoMateriales (OrdenMantenimientoId,Material,Cantidad) VALUES(@oid,@mat,@qty)');
+    }
+    res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
