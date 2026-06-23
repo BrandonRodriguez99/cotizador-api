@@ -707,12 +707,19 @@ const insertOrderWithDetails = async (data) => {
   delete rawOrderData.Aprobaciones; delete rawOrderData.aprobaciones;
 
   const orderData = normalizeRecord(rawOrderData, "OrdenesCompra");
-  if (!orderData.Folio) orderData.Folio = await generateOrderFolio();
+  // Folio will be set after INSERT using the actual DB-assigned ID (no race condition)
+  delete orderData.Folio;
 
   const transaction = new sql.Transaction(pool);
   try {
     await transaction.begin();
     const orderId = await insertCatalogItemInTransaction(transaction, "OrdenesCompra", orderData);
+    // Generate folio from the real ID and update in the same transaction
+    const folio = generateOrderFolio(orderId);
+    await new sql.Request(transaction)
+      .input("folio", sql.NVarChar(50), folio)
+      .input("id", sql.Int, orderId)
+      .query("UPDATE OrdenesCompra SET Folio = @folio WHERE OrdenCompraId = @id");
     for (const item of lineItems) {
       await insertCatalogItemInTransaction(transaction, "OrdenesCompraLineas", normalizeRecord({ ...item, OrdenCompraId: orderId }, "OrdenesCompraLineas"));
     }
@@ -727,11 +734,9 @@ const insertOrderWithDetails = async (data) => {
   }
 };
 
-const generateOrderFolio = async () => {
+const generateOrderFolio = (id) => {
   const year = new Date().getFullYear();
-  const result = await pool.request().query(`SELECT ISNULL(MAX(OrdenCompraId), 0) AS MaxId FROM OrdenesCompra`);
-  const nextNumber = (result.recordset[0]?.MaxId || 0) + 1;
-  return `OC-${year}-${String(nextNumber).padStart(6, "0")}`;
+  return `OC-${year}-${String(id).padStart(6, "0")}`;
 };
 
 // ─── Middleware JWT ───────────────────────────────────────────────────────────
