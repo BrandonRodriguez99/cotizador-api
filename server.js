@@ -2943,7 +2943,7 @@ app.get('/api/inventario', autenticar, async (req, res) => {
     const r = await pool.request().query(`
       SELECT i.*,
         CASE WHEN i.CantidadReal <= 0          THEN 'agotado'
-             WHEN i.CantidadReal <= i.CantidadMinima THEN 'bajo'
+             WHEN i.CantidadReal < i.CantidadMinima THEN 'bajo'
              ELSE 'ok' END AS EstadoStock
       FROM Inventario i
       ORDER BY i.NombreProducto
