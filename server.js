@@ -309,7 +309,41 @@ sql
               OrdenMantenimientoId    INT NOT NULL,
               Material                NVARCHAR(500) NULL,
               Cantidad                NVARCHAR(100) NULL,
+              ProductoId              INT NULL,
               FOREIGN KEY (OrdenMantenimientoId) REFERENCES dbo.OrdenesMantenimiento(OrdenMantenimientoId)
+            );
+
+          -- Columna ProductoId en materiales (si la tabla ya existía sin ella)
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.OrdenesMantenimientoMateriales') AND name='ProductoId')
+            ALTER TABLE dbo.OrdenesMantenimientoMateriales ADD ProductoId INT NULL;
+
+          -- Inventario de materiales
+          IF OBJECT_ID('dbo.Inventario','U') IS NULL
+            CREATE TABLE dbo.Inventario (
+              ProductoId      INT IDENTITY(1,1) PRIMARY KEY,
+              NombreProducto  NVARCHAR(300) NOT NULL,
+              Descripcion     NVARCHAR(500) NULL,
+              UnidadMedida    NVARCHAR(100) NULL DEFAULT 'pza',
+              CantidadMinima  DECIMAL(10,2) NOT NULL DEFAULT 0,
+              CantidadReal    DECIMAL(10,2) NOT NULL DEFAULT 0,
+              Precio          DECIMAL(18,2) NULL DEFAULT 0,
+              Activo          BIT NOT NULL DEFAULT 1,
+              FechaCreacion   DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+            );
+
+          IF OBJECT_ID('dbo.InventarioMovimientos','U') IS NULL
+            CREATE TABLE dbo.InventarioMovimientos (
+              MovimientoId         INT IDENTITY(1,1) PRIMARY KEY,
+              ProductoId           INT NOT NULL,
+              TipoMovimiento       NVARCHAR(50)  NOT NULL,
+              Cantidad             DECIMAL(10,2) NOT NULL,
+              CantidadAnterior     DECIMAL(10,2) NOT NULL DEFAULT 0,
+              OrdenMantenimientoId INT NULL,
+              OrdenCompraId        INT NULL,
+              Usuario              NVARCHAR(150) NULL,
+              Referencia           NVARCHAR(300) NULL,
+              Fecha                DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+              FOREIGN KEY (ProductoId) REFERENCES dbo.Inventario(ProductoId)
             );
 
           IF OBJECT_ID('dbo.OrdenesCompraFacturas','U') IS NULL
@@ -2868,9 +2902,154 @@ app.put('/api/ordenes-mantenimiento/:id', autenticar, async (req, res) => {
         .input('oid', sql.Int, id)
         .input('mat', sql.NVarChar(500), m.material)
         .input('qty', sql.NVarChar(100), m.cantidad || '')
-        .query('INSERT INTO OrdenesMantenimientoMateriales (OrdenMantenimientoId,Material,Cantidad) VALUES(@oid,@mat,@qty)');
+        .input('pid', sql.Int, m.productoId ? Number(m.productoId) : null)
+        .query('INSERT INTO OrdenesMantenimientoMateriales (OrdenMantenimientoId,Material,Cantidad,ProductoId) VALUES(@oid,@mat,@qty,@pid)');
+
+      // Descontar del inventario si se marca como Completada
+      if (m.productoId && d.estado === 'Completada') {
+        const cantConsumo = parseFloat(m.cantidad) || 0;
+        if (cantConsumo > 0) {
+          const prodRes = await pool.request()
+            .input('pid', sql.Int, Number(m.productoId))
+            .query('SELECT CantidadReal FROM Inventario WHERE ProductoId=@pid');
+          if (prodRes.recordset.length) {
+            const cantAnterior = Number(prodRes.recordset[0].CantidadReal);
+            const cantNueva    = Math.max(0, cantAnterior - cantConsumo);
+            await pool.request()
+              .input('pid',  sql.Int,           Number(m.productoId))
+              .input('cant', sql.Decimal(10,2),  cantNueva)
+              .query('UPDATE Inventario SET CantidadReal=@cant WHERE ProductoId=@pid');
+            await pool.request()
+              .input('pid',  sql.Int,           Number(m.productoId))
+              .input('cant', sql.Decimal(10,2),  cantConsumo)
+              .input('ant',  sql.Decimal(10,2),  cantAnterior)
+              .input('oid',  sql.Int,            id)
+              .input('usr',  sql.NVarChar(150),  req.usuario?.nombre || '')
+              .query(`INSERT INTO InventarioMovimientos
+                        (ProductoId,TipoMovimiento,Cantidad,CantidadAnterior,OrdenMantenimientoId,Usuario)
+                      VALUES(@pid,'consumo',@cant,@ant,@oid,@usr)`);
+          }
+        }
+      }
     }
     res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Inventario ────────────────────────────────────────────────────────────────
+app.get('/api/inventario', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const r = await pool.request().query(`
+      SELECT i.*,
+        CASE WHEN i.CantidadReal <= 0          THEN 'agotado'
+             WHEN i.CantidadReal <= i.CantidadMinima THEN 'bajo'
+             ELSE 'ok' END AS EstadoStock
+      FROM Inventario i
+      ORDER BY i.NombreProducto
+    `);
+    res.json(r.recordset);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/inventario/dashboard', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const stats = await pool.request().query(`
+      SELECT
+        COUNT(*)                                                               AS TotalProductos,
+        SUM(CASE WHEN Activo=1 THEN 1 ELSE 0 END)                            AS ProductosActivos,
+        SUM(CASE WHEN CantidadReal<=0 AND Activo=1 THEN 1 ELSE 0 END)        AS Agotados,
+        SUM(CASE WHEN CantidadReal>0 AND CantidadReal<=CantidadMinima AND Activo=1 THEN 1 ELSE 0 END) AS StockBajo,
+        SUM(CantidadReal * ISNULL(Precio,0))                                 AS ValorTotal
+      FROM Inventario
+    `);
+    const movs = await pool.request().query(`
+      SELECT TOP 15 m.*, i.NombreProducto, i.UnidadMedida
+      FROM InventarioMovimientos m
+      JOIN Inventario i ON i.ProductoId = m.ProductoId
+      ORDER BY m.Fecha DESC
+    `);
+    res.json({ stats: stats.recordset[0], movimientos: movs.recordset });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/inventario', autenticar, soloAdmin, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const d = req.body;
+    const r = await pool.request()
+      .input('NombreProducto', sql.NVarChar(300),  d.nombreProducto || d.NombreProducto)
+      .input('Descripcion',    sql.NVarChar(500),   d.descripcion    || d.Descripcion    || null)
+      .input('UnidadMedida',   sql.NVarChar(100),   d.unidadMedida   || d.UnidadMedida   || 'pza')
+      .input('CantidadMinima', sql.Decimal(10,2),   Number(d.cantidadMinima ?? d.CantidadMinima ?? 0))
+      .input('CantidadReal',   sql.Decimal(10,2),   Number(d.cantidadReal   ?? d.CantidadReal   ?? 0))
+      .input('Precio',         sql.Decimal(18,2),   Number(d.precio         ?? d.Precio         ?? 0))
+      .query(`
+        INSERT INTO Inventario (NombreProducto,Descripcion,UnidadMedida,CantidadMinima,CantidadReal,Precio)
+        VALUES (@NombreProducto,@Descripcion,@UnidadMedida,@CantidadMinima,@CantidadReal,@Precio);
+        SELECT SCOPE_IDENTITY() AS id;
+      `);
+    const newId   = r.recordset[0].id;
+    const cantIni = Number(d.cantidadReal ?? d.CantidadReal ?? 0);
+    if (cantIni > 0) {
+      await pool.request()
+        .input('pid',  sql.Int,           newId)
+        .input('cant', sql.Decimal(10,2),  cantIni)
+        .input('usr',  sql.NVarChar(150),  req.usuario?.nombre || '')
+        .query(`INSERT INTO InventarioMovimientos (ProductoId,TipoMovimiento,Cantidad,CantidadAnterior,Usuario,Referencia)
+                VALUES(@pid,'ingreso',@cant,0,@usr,'Stock inicial')`);
+    }
+    res.json({ id: newId });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/inventario/:id', autenticar, soloAdmin, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const id = Number(req.params.id);
+    const d  = req.body;
+    await pool.request()
+      .input('id',             sql.Int,           id)
+      .input('NombreProducto', sql.NVarChar(300),  d.nombreProducto || d.NombreProducto)
+      .input('Descripcion',    sql.NVarChar(500),   d.descripcion    || d.Descripcion    || null)
+      .input('UnidadMedida',   sql.NVarChar(100),   d.unidadMedida   || d.UnidadMedida   || 'pza')
+      .input('CantidadMinima', sql.Decimal(10,2),   Number(d.cantidadMinima ?? d.CantidadMinima ?? 0))
+      .input('Precio',         sql.Decimal(18,2),   Number(d.precio         ?? d.Precio         ?? 0))
+      .input('Activo',         sql.Bit,             d.activo !== undefined ? (d.activo ? 1 : 0) : 1)
+      .query(`UPDATE Inventario SET
+                NombreProducto=@NombreProducto, Descripcion=@Descripcion,
+                UnidadMedida=@UnidadMedida, CantidadMinima=@CantidadMinima,
+                Precio=@Precio, Activo=@Activo
+              WHERE ProductoId=@id`);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/inventario/:id/ajuste', autenticar, soloAdmin, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const id  = Number(req.params.id);
+    const { cantidad, tipo, referencia } = req.body;
+    const cur = await pool.request().input('id', sql.Int, id)
+      .query('SELECT CantidadReal FROM Inventario WHERE ProductoId=@id');
+    if (!cur.recordset.length) return res.status(404).json({ error: 'Producto no encontrado' });
+    const cantAnterior = Number(cur.recordset[0].CantidadReal);
+    const cantNueva    = tipo === 'ingreso' ? cantAnterior + Number(cantidad) : Number(cantidad);
+    await pool.request()
+      .input('id',   sql.Int,           id)
+      .input('cant', sql.Decimal(10,2),  Math.max(0, cantNueva))
+      .query('UPDATE Inventario SET CantidadReal=@cant WHERE ProductoId=@id');
+    await pool.request()
+      .input('pid',  sql.Int,           id)
+      .input('tipo', sql.NVarChar(50),   tipo || 'ajuste')
+      .input('cant', sql.Decimal(10,2),  Number(cantidad))
+      .input('ant',  sql.Decimal(10,2),  cantAnterior)
+      .input('usr',  sql.NVarChar(150),  req.usuario?.nombre || '')
+      .input('ref',  sql.NVarChar(300),  referencia || null)
+      .query(`INSERT INTO InventarioMovimientos (ProductoId,TipoMovimiento,Cantidad,CantidadAnterior,Usuario,Referencia)
+              VALUES(@pid,@tipo,@cant,@ant,@usr,@ref)`);
+    res.json({ ok: true, cantidadReal: Math.max(0, cantNueva) });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
