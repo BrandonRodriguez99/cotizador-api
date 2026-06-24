@@ -557,6 +557,65 @@ function emailPasoAprobado(folio, proveedor, total, paso) {
     </div>`;
 }
 
+async function getEmailsPorRoles(roles) {
+  if (!pool || !roles.length) return [];
+  try {
+    const placeholders = roles.map((_, i) => `@r${i}`).join(',');
+    const req = pool.request();
+    roles.forEach((rol, i) => req.input(`r${i}`, sql.NVarChar(50), rol));
+    const r = await req.query(`SELECT DISTINCT Correo FROM dbo.Usuarios WHERE Rol IN (${placeholders}) AND Activo=1 AND Correo IS NOT NULL AND Correo != ''`);
+    return r.recordset.map(u => u.Correo).filter(Boolean);
+  } catch { return []; }
+}
+
+function emailOMCreada(folio, equipo, departamento, razon, solicitante) {
+  const razonLabel = { correctivo: 'Mantenimiento Correctivo', preventivo: 'Mantenimiento Preventivo', predictivo: 'Mantenimiento Predictivo', programado: 'Mantenimiento Programado' };
+  return `
+    <div style="font-family:sans-serif;max-width:600px;margin:0 auto">
+      <div style="background:#1e3a5f;padding:16px 20px;border-radius:6px 6px 0 0">
+        <h2 style="color:#fff;margin:0;font-size:18px">Nueva Orden de Mantenimiento</h2>
+      </div>
+      <div style="border:1px solid #e5e7eb;border-top:none;padding:20px;border-radius:0 0 6px 6px">
+        <p style="margin:0 0 16px;color:#374151">Se ha registrado una nueva orden de mantenimiento que requiere atención:</p>
+        <table style="width:100%;border-collapse:collapse;margin:0 0 20px">
+          <tr><td style="padding:8px 10px;font-weight:bold;background:#f3f4f6;width:42%">Folio</td><td style="padding:8px 10px;background:#f3f4f6">${folio}</td></tr>
+          <tr><td style="padding:8px 10px;font-weight:bold">Equipo / Área</td><td style="padding:8px 10px">${equipo || '-'}</td></tr>
+          <tr><td style="padding:8px 10px;font-weight:bold;background:#f3f4f6">Departamento</td><td style="padding:8px 10px;background:#f3f4f6">${departamento || '-'}</td></tr>
+          <tr><td style="padding:8px 10px;font-weight:bold">Tipo de mantenimiento</td><td style="padding:8px 10px">${razonLabel[razon] || razon || '-'}</td></tr>
+          <tr><td style="padding:8px 10px;font-weight:bold;background:#f3f4f6">Solicitante</td><td style="padding:8px 10px;background:#f3f4f6">${solicitante || '-'}</td></tr>
+        </table>
+        <a href="${APP_URL}" style="display:inline-block;padding:12px 24px;background:#1e3a5f;color:white;text-decoration:none;border-radius:6px;font-weight:bold">Ver en el sistema</a>
+      </div>
+    </div>`;
+}
+
+function emailOMCompletada(folio, equipo, tecnico, tipoFalla, descripcion, materiales) {
+  const matsHtml = materiales && materiales.length
+    ? `<table style="width:100%;border-collapse:collapse;margin:8px 0 16px">
+        <tr style="background:#1e3a5f"><th style="padding:6px 10px;text-align:left;color:#fff">Refacción / Material</th><th style="padding:6px 10px;text-align:center;color:#fff">Cantidad</th></tr>
+        ${materiales.map((m, i) => `<tr style="background:${i%2===0?'#fff':'#f3f4f6'}"><td style="padding:6px 10px">${m.material||''}</td><td style="padding:6px 10px;text-align:center">${m.cantidad||''}</td></tr>`).join('')}
+      </table>`
+    : '<p style="color:#6b7280;font-size:13px;margin:0 0 16px">Sin materiales registrados.</p>';
+  return `
+    <div style="font-family:sans-serif;max-width:600px;margin:0 auto">
+      <div style="background:#15803d;padding:16px 20px;border-radius:6px 6px 0 0">
+        <h2 style="color:#fff;margin:0;font-size:18px">✓ Orden de Mantenimiento Completada</h2>
+      </div>
+      <div style="border:1px solid #e5e7eb;border-top:none;padding:20px;border-radius:0 0 6px 6px">
+        <table style="width:100%;border-collapse:collapse;margin:0 0 20px">
+          <tr><td style="padding:8px 10px;font-weight:bold;background:#f3f4f6;width:42%">Folio</td><td style="padding:8px 10px;background:#f3f4f6">${folio}</td></tr>
+          <tr><td style="padding:8px 10px;font-weight:bold">Equipo / Área</td><td style="padding:8px 10px">${equipo || '-'}</td></tr>
+          <tr><td style="padding:8px 10px;font-weight:bold;background:#f3f4f6">Técnico responsable</td><td style="padding:8px 10px;background:#f3f4f6">${tecnico || '-'}</td></tr>
+          <tr><td style="padding:8px 10px;font-weight:bold">Tipo de falla</td><td style="padding:8px 10px">${tipoFalla || '-'}</td></tr>
+        </table>
+        ${descripcion ? `<div style="margin:0 0 16px"><p style="font-weight:bold;margin:0 0 6px;color:#374151">Descripción del trabajo realizado:</p><p style="margin:0;padding:10px 14px;background:#f3f4f6;border-radius:4px;color:#374151;line-height:1.6">${descripcion}</p></div>` : ''}
+        <p style="font-weight:bold;margin:0 0 8px;color:#374151">Materiales utilizados:</p>
+        ${matsHtml}
+        <a href="${APP_URL}" style="display:inline-block;padding:12px 24px;background:#1e3a5f;color:white;text-decoration:none;border-radius:6px;font-weight:bold">Ver en el sistema</a>
+      </div>
+    </div>`;
+}
+
 async function getEmailDeUsuario(nombre) {
   if (!pool || !nombre) return [];
   try {
@@ -2903,6 +2962,12 @@ app.post('/api/ordenes-mantenimiento', autenticar, async (req, res) => {
     await pool.request().input('folio', sql.NVarChar(50), folio).input('id', sql.Int, newId)
       .query('UPDATE OrdenesMantenimiento SET Folio=@folio WHERE OrdenMantenimientoId=@id');
     res.json({ id: newId, folio });
+    // Notificar a personal de mantenimiento (fire-and-forget)
+    getEmailsPorRoles(['mantenimiento', 'jefe_mantenimiento']).then(emails => {
+      if (emails.length)
+        sendMail(emails, `Nueva Orden de Mantenimiento — ${folio}`,
+          emailOMCreada(folio, d.equipo, d.departamento, d.razonOrden, d.nombreSolicita));
+    }).catch(() => {});
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -2968,6 +3033,22 @@ app.put('/api/ordenes-mantenimiento/:id', autenticar, async (req, res) => {
       }
     }
     res.json({ ok: true });
+    // Notificar al jefe de mantenimiento si la orden se completó (fire-and-forget)
+    if (d.estado === 'Completada') {
+      (async () => {
+        try {
+          const omRes = await pool.request().input('id', sql.Int, id)
+            .query('SELECT Folio, Equipo FROM OrdenesMantenimiento WHERE OrdenMantenimientoId=@id');
+          if (!omRes.recordset.length) return;
+          const om = omRes.recordset[0];
+          const emails = await getEmailsPorRoles(['jefe_mantenimiento']);
+          if (emails.length)
+            sendMail(emails, `Orden ${om.Folio} completada`,
+              emailOMCompletada(om.Folio, om.Equipo, d.tecnicoResponsable, d.tipoFalla,
+                d.descripcionMantenimiento, (d.materiales || []).filter(m => m.material?.trim())));
+        } catch(e) { console.log('Email OM completada:', e.message); }
+      })();
+    }
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
