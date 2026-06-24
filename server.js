@@ -1920,7 +1920,8 @@ app.post("/api/ordenescompra", async (req, res) => {
     Promise.all([
       getEmailsDeRol("autorizador1"),
       getEmailDeUsuario(creador),
-    ]).then(([emailsAut, emailsCreador]) => {
+      getEmailsPorRoles(["empleado"]),
+    ]).then(([emailsAut, emailsCreador, emailsEmpleado]) => {
       if (emailsAut.length) {
         console.log(`📧 OC ${folio} → autorizador1`);
         sendMail(emailsAut, `Nueva orden ${folio} requiere su autorización`, emailOrdenCreada(folio, proveedor, total));
@@ -1929,6 +1930,10 @@ app.post("/api/ordenescompra", async (req, res) => {
         console.log(`📧 OC ${folio} → creador (${creador})`);
         sendMail(emailsCreador, `Tu orden de compra ${folio} fue registrada y está pendiente de aprobación`,
           emailOCConfirmacion(folio, proveedor, total));
+      }
+      if (emailsEmpleado.length) {
+        console.log(`📧 OC ${folio} → empleados`);
+        sendMail(emailsEmpleado, `Nueva Orden de Compra registrada — ${folio}`, emailOrdenCreada(folio, proveedor, total));
       }
     }).catch(() => {});
   } catch (err) { console.log("❌ ERROR CREAR ORDEN DE COMPRA:", err); res.status(500).json({ error: err.message || 'Error interno del servidor' }); }
@@ -2076,10 +2081,18 @@ app.post("/api/ordenescompra/:id/aprobar", autenticar, async (req, res) => {
             emailPasoAprobado(order.Folio, order.Proveedor, order.Total, 1))
         );
       } else if (paso === 2) {
-        getEmailDeUsuario(order.Creador).then((emails) => {
-          if (emails.length) {
+        Promise.all([
+          getEmailDeUsuario(order.Creador),
+          getEmailsPorRoles(["empleado"]),
+        ]).then(([emailsCreador, emailsEmpleado]) => {
+          if (emailsCreador.length) {
             console.log(`📧 OC ${order.Folio} completamente aprobada → creador (${order.Creador})`);
-            sendMail(emails, `Tu orden de compra ${order.Folio} fue aprobada`,
+            sendMail(emailsCreador, `Tu orden de compra ${order.Folio} fue aprobada`,
+              emailOCResultado(order.Folio, order.Proveedor, order.Total, true, aprobador, null));
+          }
+          if (emailsEmpleado.length) {
+            console.log(`📧 OC ${order.Folio} aprobada → empleados`);
+            sendMail(emailsEmpleado, `Orden de Compra ${order.Folio} fue aprobada`,
               emailOCResultado(order.Folio, order.Proveedor, order.Total, true, aprobador, null));
           }
         }).catch(() => {});
@@ -2117,10 +2130,18 @@ app.post("/api/ordenescompra/:id/rechazar", autenticar, async (req, res) => {
     `);
     const order = orderRes.recordset[0];
     if (order) {
-      getEmailDeUsuario(order.Creador).then((emails) => {
-        if (emails.length) {
+      Promise.all([
+        getEmailDeUsuario(order.Creador),
+        getEmailsPorRoles(["empleado"]),
+      ]).then(([emailsCreador, emailsEmpleado]) => {
+        if (emailsCreador.length) {
           console.log(`📧 OC ${order.Folio} rechazada → creador (${order.Creador})`);
-          sendMail(emails, `Tu orden de compra ${order.Folio} fue rechazada`,
+          sendMail(emailsCreador, `Tu orden de compra ${order.Folio} fue rechazada`,
+            emailOCResultado(order.Folio, order.Proveedor, order.Total, false, aprobador, motivo));
+        }
+        if (emailsEmpleado.length) {
+          console.log(`📧 OC ${order.Folio} rechazada → empleados`);
+          sendMail(emailsEmpleado, `Orden de Compra ${order.Folio} fue rechazada`,
             emailOCResultado(order.Folio, order.Proveedor, order.Total, false, aprobador, motivo));
         }
       }).catch(() => {});
