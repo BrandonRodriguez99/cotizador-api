@@ -120,10 +120,14 @@ sql
               PrecioUnitario DECIMAL(18,2) NOT NULL DEFAULT 0,
               Total DECIMAL(18,2) NOT NULL DEFAULT 0,
               OrdenLinea INT NULL,
+              ProductoId INT NULL,
               FechaCreacion DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
               FOREIGN KEY (OrdenCompraId) REFERENCES dbo.OrdenesCompra(OrdenCompraId)
             );
           END
+
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.OrdenesCompraLineas') AND name='ProductoId')
+            ALTER TABLE dbo.OrdenesCompraLineas ADD ProductoId INT NULL;
 
           IF OBJECT_ID('dbo.OrdenesCompraAprobaciones','U') IS NULL
           BEGIN
@@ -211,6 +215,10 @@ sql
           -- Columna Destino en OrdenesCompra
           IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.OrdenesCompra') AND name='Destino')
             ALTER TABLE dbo.OrdenesCompra ADD Destino NVARCHAR(100) NULL;
+
+          -- Folio debe ser nullable para el patrón insert→getID→updateFolio
+          IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.OrdenesCompra') AND name='Folio' AND is_nullable=0)
+            ALTER TABLE dbo.OrdenesCompra ALTER COLUMN Folio NVARCHAR(50) NULL;
 
           -- Columnas adicionales en Cursos
           IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Cursos') AND name='Costo')
@@ -735,6 +743,7 @@ const tableSchemas = {
     cantidad: "Cantidad", descripcion: "Descripcion", unidadmedida: "UnidadMedida",
     preciounitario: "PrecioUnitario", total: "Total", ordenlinea: "OrdenLinea",
     ordencompralid: "OrdenCompraId", ordencompraid: "OrdenCompraId",
+    productoid: "ProductoId",
   },
   OrdenesCompraAprobaciones: {
     paso: "Paso", step: "Paso",
@@ -790,6 +799,32 @@ const insertOrderWithDetails = async (data) => {
       .query("UPDATE OrdenesCompra SET Folio = @folio WHERE OrdenCompraId = @id");
     for (const item of lineItems) {
       await insertCatalogItemInTransaction(transaction, "OrdenesCompraLineas", normalizeRecord({ ...item, OrdenCompraId: orderId }, "OrdenesCompraLineas"));
+
+      // Si la partida tiene ProductoId, incrementar stock (ingreso por compra)
+      const productoId = item.ProductoId || item.productoid || null;
+      const cantidadCompra = Number(item.Cantidad || item.cantidad || 0);
+      if (productoId && cantidadCompra > 0) {
+        const prodRes = await new sql.Request(transaction)
+          .input('pid', sql.Int, Number(productoId))
+          .query('SELECT CantidadReal FROM Inventario WHERE ProductoId=@pid');
+        if (prodRes.recordset.length) {
+          const cantAnterior = Number(prodRes.recordset[0].CantidadReal);
+          const cantNueva    = cantAnterior + cantidadCompra;
+          await new sql.Request(transaction)
+            .input('pid',  sql.Int,           Number(productoId))
+            .input('cant', sql.Decimal(10,2),  cantNueva)
+            .query('UPDATE Inventario SET CantidadReal=@cant WHERE ProductoId=@pid');
+          await new sql.Request(transaction)
+            .input('pid',  sql.Int,           Number(productoId))
+            .input('cant', sql.Decimal(10,2),  cantidadCompra)
+            .input('ant',  sql.Decimal(10,2),  cantAnterior)
+            .input('ocId', sql.Int,            orderId)
+            .input('ref',  sql.NVarChar(300),  folio)
+            .query(`INSERT INTO InventarioMovimientos
+                      (ProductoId,TipoMovimiento,Cantidad,CantidadAnterior,OrdenCompraId,Referencia)
+                    VALUES(@pid,'ingreso',@cant,@ant,@ocId,@ref)`);
+        }
+      }
     }
     for (const approval of approvals) {
       await insertCatalogItemInTransaction(transaction, "OrdenesCompraAprobaciones", normalizeRecord({ ...approval, OrdenCompraId: orderId }, "OrdenesCompraAprobaciones"));
