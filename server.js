@@ -2960,7 +2960,7 @@ app.get('/api/inventario/dashboard', autenticar, async (req, res) => {
         COUNT(*)                                                               AS TotalProductos,
         SUM(CASE WHEN Activo=1 THEN 1 ELSE 0 END)                            AS ProductosActivos,
         SUM(CASE WHEN CantidadReal<=0 AND Activo=1 THEN 1 ELSE 0 END)        AS Agotados,
-        SUM(CASE WHEN CantidadReal>0 AND CantidadReal<=CantidadMinima AND Activo=1 THEN 1 ELSE 0 END) AS StockBajo,
+        SUM(CASE WHEN CantidadReal>0 AND CantidadReal<CantidadMinima AND Activo=1 THEN 1 ELSE 0 END) AS StockBajo,
         SUM(CantidadReal * ISNULL(Precio,0))                                 AS ValorTotal
       FROM Inventario
     `);
