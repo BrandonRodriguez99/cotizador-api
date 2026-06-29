@@ -1911,7 +1911,7 @@ app.post("/api/ordenescompra", async (req, res) => {
   try {
     if (!ensurePool(res)) return;
     const orderId   = await insertOrderWithDetails(req.body);
-    const folio     = req.body.Folio    || req.body.folio    || "";
+    const folio     = generateOrderFolio(orderId);
     const proveedor = req.body.Proveedor|| req.body.proveedor|| "";
     const total     = req.body.Total    || req.body.total    || 0;
     const creador   = req.body.Creador  || req.body.creador  || "";
@@ -1920,7 +1920,7 @@ app.post("/api/ordenescompra", async (req, res) => {
     Promise.all([
       getEmailsDeRol("autorizador1"),
       getEmailDeUsuario(creador),
-      getEmailsPorRoles(["empleado"]),
+      getEmailsPorRoles(["empleado", "jefe_mantenimiento"]),
     ]).then(([emailsAut, emailsCreador, emailsEmpleado]) => {
       if (emailsAut.length) {
         console.log(`📧 OC ${folio} → autorizador1`);
@@ -2076,14 +2076,15 @@ app.post("/api/ordenescompra/:id/aprobar", autenticar, async (req, res) => {
     const order = orderRes.recordset[0];
     if (order) {
       if (paso === 1) {
-        getEmailsDeRol("autorizador2").then((emails) =>
-          sendMail(emails, `Orden ${order.Folio} aprobada — requiere su autorización`,
-            emailPasoAprobado(order.Folio, order.Proveedor, order.Total, 1))
-        );
+        getEmailsDeRol("autorizador2").then((emails) => {
+          if (emails.length)
+            sendMail(emails, `Orden ${order.Folio} aprobada — requiere su autorización`,
+              emailPasoAprobado(order.Folio, order.Proveedor, order.Total, 1));
+        }).catch(() => {});
       } else if (paso === 2) {
         Promise.all([
           getEmailDeUsuario(order.Creador),
-          getEmailsPorRoles(["empleado"]),
+          getEmailsPorRoles(["empleado", "jefe_mantenimiento"]),
         ]).then(([emailsCreador, emailsEmpleado]) => {
           if (emailsCreador.length) {
             console.log(`📧 OC ${order.Folio} completamente aprobada → creador (${order.Creador})`);
@@ -2122,18 +2123,20 @@ app.post("/api/ordenescompra/:id/rechazar", autenticar, async (req, res) => {
 
     res.json({ ok: true });
 
-    // Notificar al creador
-    const orderRes = await pool.request().input("id", sql.Int, orderId).query(`
-      SELECT oc.Folio, oc.Total, oc.Creador, p.Nombre AS Proveedor
-      FROM OrdenesCompra oc INNER JOIN Proveedores p ON oc.ProveedorId=p.ProveedorId
-      WHERE oc.OrdenCompraId=@id
-    `);
-    const order = orderRes.recordset[0];
-    if (order) {
-      Promise.all([
-        getEmailDeUsuario(order.Creador),
-        getEmailsPorRoles(["empleado"]),
-      ]).then(([emailsCreador, emailsEmpleado]) => {
+    // Notificar (fire-and-forget — fuera del try/catch principal para evitar "headers already sent")
+    ;(async () => {
+      try {
+        const orderRes = await pool.request().input("id", sql.Int, orderId).query(`
+          SELECT oc.Folio, oc.Total, oc.Creador, p.Nombre AS Proveedor
+          FROM OrdenesCompra oc INNER JOIN Proveedores p ON oc.ProveedorId=p.ProveedorId
+          WHERE oc.OrdenCompraId=@id
+        `);
+        const order = orderRes.recordset[0];
+        if (!order) return;
+        const [emailsCreador, emailsEmpleado] = await Promise.all([
+          getEmailDeUsuario(order.Creador),
+          getEmailsPorRoles(["empleado", "jefe_mantenimiento"]),
+        ]);
         if (emailsCreador.length) {
           console.log(`📧 OC ${order.Folio} rechazada → creador (${order.Creador})`);
           sendMail(emailsCreador, `Tu orden de compra ${order.Folio} fue rechazada`,
@@ -2144,8 +2147,8 @@ app.post("/api/ordenescompra/:id/rechazar", autenticar, async (req, res) => {
           sendMail(emailsEmpleado, `Orden de Compra ${order.Folio} fue rechazada`,
             emailOCResultado(order.Folio, order.Proveedor, order.Total, false, aprobador, motivo));
         }
-      }).catch(() => {});
-    }
+      } catch(e) { console.log('Email rechazo OC:', e.message); }
+    })();
   } catch (err) {
     console.log("❌ ERROR RECHAZAR ORDEN:", err);
     res.status(500).json({ error: err.message || "Error al rechazar" });
