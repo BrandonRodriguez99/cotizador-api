@@ -467,6 +467,159 @@ sql
           console.log("✅ Usuario admin creado: admin@udat.com / Udat2024!");
         }
         console.log("✅ Tablas de autenticación aseguradas");
+
+        // ── Tablas del módulo de Seguridad ────────────────────────────────────
+        await pool.request().query(`
+          IF OBJECT_ID('dbo.Vehiculos','U') IS NULL
+          BEGIN
+            CREATE TABLE dbo.Vehiculos (
+              VehiculoId   INT IDENTITY(1,1) PRIMARY KEY,
+              Marca        NVARCHAR(100) NOT NULL,
+              Modelo       NVARCHAR(100) NOT NULL,
+              Placa        NVARCHAR(20)  NOT NULL,
+              Año          INT           NULL,
+              Color        NVARCHAR(50)  NULL,
+              Capacidad    INT           NULL,
+              Activo       BIT           NOT NULL DEFAULT 1,
+              FechaCreacion DATETIME2    NOT NULL DEFAULT SYSUTCDATETIME()
+            );
+          END
+
+          IF OBJECT_ID('dbo.Extintores','U') IS NULL
+          BEGIN
+            CREATE TABLE dbo.Extintores (
+              ExtintorId       INT IDENTITY(1,1) PRIMARY KEY,
+              Codigo           NVARCHAR(50)  NOT NULL,
+              Tipo             NVARCHAR(50)  NULL,
+              Ubicacion        NVARCHAR(300) NULL,
+              FechaVencimiento DATE          NULL,
+              Activo           BIT           NOT NULL DEFAULT 1,
+              FechaCreacion    DATETIME2     NOT NULL DEFAULT SYSUTCDATETIME()
+            );
+          END
+
+          IF OBJECT_ID('dbo.PuntosRevision','U') IS NULL
+          BEGIN
+            CREATE TABLE dbo.PuntosRevision (
+              PuntoRevisionId INT IDENTITY(1,1) PRIMARY KEY,
+              Nombre          NVARCHAR(200) NOT NULL,
+              Descripcion     NVARCHAR(500) NULL,
+              Activo          BIT           NOT NULL DEFAULT 1,
+              FechaCreacion   DATETIME2     NOT NULL DEFAULT SYSUTCDATETIME()
+            );
+          END
+
+          IF OBJECT_ID('dbo.AreasRevision','U') IS NULL
+          BEGIN
+            CREATE TABLE dbo.AreasRevision (
+              AreaRevisionId  INT IDENTITY(1,1) PRIMARY KEY,
+              PuntoRevisionId INT           NOT NULL,
+              Nombre          NVARCHAR(200) NOT NULL,
+              Activo          BIT           NOT NULL DEFAULT 1,
+              FOREIGN KEY (PuntoRevisionId) REFERENCES dbo.PuntosRevision(PuntoRevisionId)
+            );
+          END
+        `);
+
+        await pool.request().query(`
+          IF OBJECT_ID('dbo.Rondines','U') IS NULL
+          BEGIN
+            CREATE TABLE dbo.Rondines (
+              RondinId      INT IDENTITY(1,1) PRIMARY KEY,
+              Folio         NVARCHAR(50)  NULL,
+              Guardia       NVARCHAR(200) NULL,
+              FechaInicio   DATETIME2     NULL,
+              FechaFin      DATETIME2     NULL,
+              Estado        NVARCHAR(50)  NOT NULL DEFAULT 'en_curso',
+              Observaciones NVARCHAR(MAX) NULL,
+              FechaCreacion DATETIME2     NOT NULL DEFAULT SYSUTCDATETIME()
+            );
+          END
+
+          IF OBJECT_ID('dbo.RondinesRegistros','U') IS NULL
+          BEGIN
+            CREATE TABLE dbo.RondinesRegistros (
+              RegistroId              INT IDENTITY(1,1) PRIMARY KEY,
+              RondinId                INT           NOT NULL,
+              PuntoRevisionId         INT           NULL,
+              AreaRevisionId          INT           NULL,
+              Revisado                BIT           NOT NULL DEFAULT 0,
+              HoraRevision            DATETIME2     NULL,
+              TieneIncidencia         BIT           NOT NULL DEFAULT 0,
+              NivelSeveridad          NVARCHAR(20)  NULL,
+              DescripcionIncidencia   NVARCHAR(MAX) NULL,
+              RequiereMantenimiento   BIT           NOT NULL DEFAULT 0,
+              OrdenMantenimientoId    INT           NULL,
+              FOREIGN KEY (RondinId)       REFERENCES dbo.Rondines(RondinId),
+              FOREIGN KEY (PuntoRevisionId) REFERENCES dbo.PuntosRevision(PuntoRevisionId),
+              FOREIGN KEY (AreaRevisionId)  REFERENCES dbo.AreasRevision(AreaRevisionId)
+            );
+          END
+
+          IF OBJECT_ID('dbo.RevisionesExtintores','U') IS NULL
+          BEGIN
+            CREATE TABLE dbo.RevisionesExtintores (
+              RevisionId         INT IDENTITY(1,1) PRIMARY KEY,
+              ExtintorId         INT          NOT NULL,
+              Guardia            NVARCHAR(200) NULL,
+              FechaRevision      DATE         NOT NULL,
+              PresionAdecuada    BIT          NULL,
+              CondicionFisica    NVARCHAR(100) NULL,
+              VencimientoVigente BIT          NULL,
+              Observaciones      NVARCHAR(MAX) NULL,
+              FechaCreacion      DATETIME2    NOT NULL DEFAULT SYSUTCDATETIME(),
+              FOREIGN KEY (ExtintorId) REFERENCES dbo.Extintores(ExtintorId)
+            );
+          END
+
+          IF OBJECT_ID('dbo.Visitas','U') IS NULL
+          BEGIN
+            CREATE TABLE dbo.Visitas (
+              VisitaId        INT IDENTITY(1,1) PRIMARY KEY,
+              Folio           NVARCHAR(50)  NULL,
+              NombreVisitante NVARCHAR(300) NOT NULL,
+              Empresa         NVARCHAR(200) NULL,
+              Documento       NVARCHAR(100) NULL,
+              TipoVisita      NVARCHAR(50)  NULL,
+              AQuienVisita    NVARCHAR(300) NULL,
+              Motivo          NVARCHAR(500) NULL,
+              HoraEntrada     DATETIME2     NULL,
+              HoraSalida      DATETIME2     NULL,
+              Guardia         NVARCHAR(200) NULL,
+              Observaciones   NVARCHAR(MAX) NULL,
+              FechaCreacion   DATETIME2     NOT NULL DEFAULT SYSUTCDATETIME()
+            );
+          END
+
+          IF OBJECT_ID('dbo.OrdenesVehiculo','U') IS NULL
+          BEGIN
+            CREATE TABLE dbo.OrdenesVehiculo (
+              OrdenVehiculoId      INT IDENTITY(1,1) PRIMARY KEY,
+              Folio                NVARCHAR(50)   NULL,
+              VehiculoId           INT            NULL,
+              Solicitante          NVARCHAR(200)  NULL,
+              Destino              NVARCHAR(300)  NULL,
+              Motivo               NVARCHAR(500)  NULL,
+              FechaSalidaEstimada  DATE           NULL,
+              HoraSalidaEstimada   NVARCHAR(10)   NULL,
+              Pasajeros            INT            NULL,
+              Estado               NVARCHAR(50)   NOT NULL DEFAULT 'pendiente',
+              AutorizadoPor        NVARCHAR(200)  NULL,
+              FechaAutorizacion    DATETIME2      NULL,
+              MotivoRechazo        NVARCHAR(500)  NULL,
+              HoraSalidaReal       DATETIME2      NULL,
+              HoraLlegada          DATETIME2      NULL,
+              KmInicial            DECIMAL(10,2)  NULL,
+              KmFinal              DECIMAL(10,2)  NULL,
+              RegistradoPorSalida  NVARCHAR(200)  NULL,
+              RegistradoPorLlegada NVARCHAR(200)  NULL,
+              Observaciones        NVARCHAR(MAX)  NULL,
+              FechaCreacion        DATETIME2      NOT NULL DEFAULT SYSUTCDATETIME()
+            );
+          END
+        `);
+        console.log("✅ Tablas de seguridad aseguradas");
+
       } catch (e) {
         console.log("❌ Error asegurando tablas:", e);
       }
@@ -728,6 +881,68 @@ function emailCotizacionResuelta(folio, cliente, curso, total, estado, comentari
     </div>`;
 }
 
+function emailIncidenciaSeguridad(rondinFolio, punto, area, severidad, descripcion, guardia) {
+  const colores = { critica: '#b91c1c', alta: '#d97706', media: '#2563eb', baja: '#15803d' };
+  const color = colores[severidad] || '#374151';
+  return `
+    <div style="font-family:sans-serif;max-width:600px;margin:0 auto">
+      <div style="background:${color};padding:16px 20px;border-radius:6px 6px 0 0">
+        <h2 style="color:#fff;margin:0;font-size:18px">⚠️ Incidencia de Seguridad — ${(severidad||'').toUpperCase()}</h2>
+      </div>
+      <div style="border:1px solid #e5e7eb;border-top:none;padding:20px;border-radius:0 0 6px 6px">
+        <table style="width:100%;border-collapse:collapse;margin:0 0 16px">
+          <tr><td style="padding:8px 10px;font-weight:bold;background:#f3f4f6;width:40%">Rondín</td><td style="padding:8px 10px;background:#f3f4f6">${rondinFolio||'-'}</td></tr>
+          <tr><td style="padding:8px 10px;font-weight:bold">Punto de revisión</td><td style="padding:8px 10px">${punto||'-'}</td></tr>
+          <tr><td style="padding:8px 10px;font-weight:bold;background:#f3f4f6">Área</td><td style="padding:8px 10px;background:#f3f4f6">${area||'-'}</td></tr>
+          <tr><td style="padding:8px 10px;font-weight:bold">Severidad</td><td style="padding:8px 10px;color:${color};font-weight:bold">${severidad||'-'}</td></tr>
+          <tr><td style="padding:8px 10px;font-weight:bold;background:#f3f4f6">Registrado por</td><td style="padding:8px 10px;background:#f3f4f6">${guardia||'-'}</td></tr>
+        </table>
+        ${descripcion?`<p style="margin:0 0 8px;font-weight:bold">Descripción:</p><p style="margin:0 0 16px;padding:10px 14px;background:#f3f4f6;border-radius:4px;line-height:1.6">${descripcion}</p>`:''}
+        <a href="${APP_URL}" style="display:inline-block;padding:12px 24px;background:#1e3a5f;color:white;text-decoration:none;border-radius:6px;font-weight:bold">Ver en el sistema</a>
+      </div>
+    </div>`;
+}
+
+function emailSolicitudVehiculo(folio, vehiculo, destino, motivo, fechaSalida, horaSalida, solicitante) {
+  return `
+    <div style="font-family:sans-serif;max-width:600px;margin:0 auto">
+      <div style="background:#1e3a5f;padding:16px 20px;border-radius:6px 6px 0 0">
+        <h2 style="color:#fff;margin:0;font-size:18px">Nueva Solicitud de Vehículo — ${folio}</h2>
+      </div>
+      <div style="border:1px solid #e5e7eb;border-top:none;padding:20px;border-radius:0 0 6px 6px">
+        <table style="width:100%;border-collapse:collapse;margin:0 0 20px">
+          <tr><td style="padding:8px 10px;font-weight:bold;background:#f3f4f6;width:40%">Folio</td><td style="padding:8px 10px;background:#f3f4f6">${folio}</td></tr>
+          <tr><td style="padding:8px 10px;font-weight:bold">Solicitante</td><td style="padding:8px 10px">${solicitante||'-'}</td></tr>
+          <tr><td style="padding:8px 10px;font-weight:bold;background:#f3f4f6">Vehículo</td><td style="padding:8px 10px;background:#f3f4f6">${vehiculo||'-'}</td></tr>
+          <tr><td style="padding:8px 10px;font-weight:bold">Destino</td><td style="padding:8px 10px">${destino||'-'}</td></tr>
+          <tr><td style="padding:8px 10px;font-weight:bold;background:#f3f4f6">Motivo</td><td style="padding:8px 10px;background:#f3f4f6">${motivo||'-'}</td></tr>
+          <tr><td style="padding:8px 10px;font-weight:bold">Salida estimada</td><td style="padding:8px 10px">${fechaSalida||'-'} ${horaSalida||''}</td></tr>
+        </table>
+        <a href="${APP_URL}" style="display:inline-block;padding:12px 24px;background:#1e3a5f;color:white;text-decoration:none;border-radius:6px;font-weight:bold">Autorizar en el sistema</a>
+      </div>
+    </div>`;
+}
+
+function emailVehiculoResuelto(folio, vehiculo, destino, estado, motivo) {
+  const aprobada = estado === 'autorizada';
+  const color = aprobada ? '#15803d' : '#b91c1c';
+  const bg    = aprobada ? '#f0fdf4' : '#fef2f2';
+  return `
+    <div style="font-family:sans-serif;max-width:600px;margin:0 auto">
+      <h2 style="color:${color}">Solicitud ${folio} — ${aprobada ? 'Autorizada' : 'Rechazada'}</h2>
+      <div style="background:${bg};border-radius:8px;padding:16px;margin-bottom:16px">
+        <p style="margin:0;color:${color};font-weight:600">${aprobada ? '✅ Tu solicitud de vehículo ha sido autorizada.' : '❌ Tu solicitud de vehículo fue rechazada.'}</p>
+      </div>
+      <table style="width:100%;border-collapse:collapse;margin:16px 0">
+        <tr><td style="padding:8px;font-weight:bold;background:#f3f4f6">Folio</td><td style="padding:8px">${folio}</td></tr>
+        <tr><td style="padding:8px;font-weight:bold">Vehículo</td><td style="padding:8px">${vehiculo||'-'}</td></tr>
+        <tr><td style="padding:8px;font-weight:bold;background:#f3f4f6">Destino</td><td style="padding:8px;background:#f3f4f6">${destino||'-'}</td></tr>
+        ${motivo?`<tr><td style="padding:8px;font-weight:bold">Motivo de rechazo</td><td style="padding:8px">${motivo}</td></tr>`:''}
+      </table>
+      <a href="${APP_URL}" style="display:inline-block;padding:12px 24px;background:#1e3a5f;color:white;text-decoration:none;border-radius:6px">Ver en el sistema</a>
+    </div>`;
+}
+
 // Helpers
 const ensurePool = (res) => {
   if (!pool) { res.status(500).send("No hay conexión SQL"); return false; }
@@ -918,6 +1133,14 @@ function autenticar(req, res, next) {
 function soloAdmin(req, res, next) {
   if (!req.usuario || req.usuario.rol !== "admin") {
     return res.status(403).json({ error: "Acceso solo para administradores" });
+  }
+  next();
+}
+
+function soloEncargadoVehiculos(req, res, next) {
+  const rolesPermitidos = ['admin', 'encargado_vehiculos'];
+  if (!req.usuario || !rolesPermitidos.includes(req.usuario.rol)) {
+    return res.status(403).json({ error: 'Solo el encargado de vehículos puede realizar esta acción' });
   }
   next();
 }
@@ -3190,6 +3413,562 @@ app.post('/api/inventario/:id/ajuste', autenticar, soloAdmin, async (req, res) =
       .query(`INSERT INTO InventarioMovimientos (ProductoId,TipoMovimiento,Cantidad,CantidadAnterior,Usuario,Referencia)
               VALUES(@pid,@tipo,@cant,@ant,@usr,@ref)`);
     res.json({ ok: true, cantidadReal: Math.max(0, cantNueva) });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ─── MÓDULO DE SEGURIDAD ─────────────────────────────────────────────────────
+
+function generateSegFolio(prefix, id) {
+  const year = new Date().getFullYear();
+  return `${prefix}-${year}-${String(id).padStart(6, '0')}`;
+}
+
+// ── Catálogo: Vehículos ───────────────────────────────────────────────────────
+
+app.get('/api/seguridad/vehiculos', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const r = await pool.request().query('SELECT * FROM Vehiculos WHERE Activo=1 ORDER BY Marca, Modelo');
+    res.json(r.recordset);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/seguridad/vehiculos', autenticar, soloAdmin, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const d = req.body;
+    const r = await pool.request()
+      .input('Marca',     sql.NVarChar(100), d.Marca   || '')
+      .input('Modelo',    sql.NVarChar(100), d.Modelo  || '')
+      .input('Placa',     sql.NVarChar(20),  d.Placa   || '')
+      .input('Año',       sql.Int,           d.Año     ? Number(d.Año)      : null)
+      .input('Color',     sql.NVarChar(50),  d.Color   || null)
+      .input('Capacidad', sql.Int,           d.Capacidad ? Number(d.Capacidad) : null)
+      .query('INSERT INTO Vehiculos (Marca,Modelo,Placa,Año,Color,Capacidad) VALUES (@Marca,@Modelo,@Placa,@Año,@Color,@Capacidad); SELECT SCOPE_IDENTITY() AS id');
+    res.json({ ok: true, id: r.recordset[0].id });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/seguridad/vehiculos/:id', autenticar, soloAdmin, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const d = req.body;
+    await pool.request()
+      .input('id',        sql.Int,           Number(req.params.id))
+      .input('Marca',     sql.NVarChar(100), d.Marca   || '')
+      .input('Modelo',    sql.NVarChar(100), d.Modelo  || '')
+      .input('Placa',     sql.NVarChar(20),  d.Placa   || '')
+      .input('Año',       sql.Int,           d.Año     ? Number(d.Año)      : null)
+      .input('Color',     sql.NVarChar(50),  d.Color   || null)
+      .input('Capacidad', sql.Int,           d.Capacidad ? Number(d.Capacidad) : null)
+      .input('Activo',    sql.Bit,           d.Activo !== false ? 1 : 0)
+      .query('UPDATE Vehiculos SET Marca=@Marca,Modelo=@Modelo,Placa=@Placa,Año=@Año,Color=@Color,Capacidad=@Capacidad,Activo=@Activo WHERE VehiculoId=@id');
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Catálogo: Extintores ──────────────────────────────────────────────────────
+
+app.get('/api/seguridad/extintores', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const r = await pool.request().query(`
+      SELECT e.*,
+        (SELECT TOP 1 FechaRevision FROM RevisionesExtintores WHERE ExtintorId=e.ExtintorId ORDER BY FechaRevision DESC) AS UltimaRevision,
+        (SELECT TOP 1 CondicionFisica FROM RevisionesExtintores WHERE ExtintorId=e.ExtintorId ORDER BY FechaRevision DESC) AS UltimaCondicion
+      FROM Extintores e WHERE e.Activo=1 ORDER BY e.Codigo
+    `);
+    res.json(r.recordset);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/seguridad/extintores', autenticar, soloAdmin, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const d = req.body;
+    const r = await pool.request()
+      .input('Codigo',           sql.NVarChar(50),  d.Codigo || '')
+      .input('Tipo',             sql.NVarChar(50),  d.Tipo   || null)
+      .input('Ubicacion',        sql.NVarChar(300), d.Ubicacion || null)
+      .input('FechaVencimiento', sql.Date,          d.FechaVencimiento || null)
+      .query('INSERT INTO Extintores (Codigo,Tipo,Ubicacion,FechaVencimiento) VALUES (@Codigo,@Tipo,@Ubicacion,@FechaVencimiento); SELECT SCOPE_IDENTITY() AS id');
+    res.json({ ok: true, id: r.recordset[0].id });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/seguridad/extintores/:id', autenticar, soloAdmin, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const d = req.body;
+    await pool.request()
+      .input('id',               sql.Int,           Number(req.params.id))
+      .input('Codigo',           sql.NVarChar(50),  d.Codigo || '')
+      .input('Tipo',             sql.NVarChar(50),  d.Tipo   || null)
+      .input('Ubicacion',        sql.NVarChar(300), d.Ubicacion || null)
+      .input('FechaVencimiento', sql.Date,          d.FechaVencimiento || null)
+      .input('Activo',           sql.Bit,           d.Activo !== false ? 1 : 0)
+      .query('UPDATE Extintores SET Codigo=@Codigo,Tipo=@Tipo,Ubicacion=@Ubicacion,FechaVencimiento=@FechaVencimiento,Activo=@Activo WHERE ExtintorId=@id');
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Catálogo: Puntos y Áreas de Revisión ─────────────────────────────────────
+
+app.get('/api/seguridad/puntos-revision', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const puntos = await pool.request().query('SELECT * FROM PuntosRevision WHERE Activo=1 ORDER BY Nombre');
+    const areas  = await pool.request().query('SELECT * FROM AreasRevision WHERE Activo=1 ORDER BY Nombre');
+    const data = puntos.recordset.map(p => ({
+      ...p,
+      areas: areas.recordset.filter(a => a.PuntoRevisionId === p.PuntoRevisionId),
+    }));
+    res.json(data);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/seguridad/puntos-revision', autenticar, soloAdmin, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const { Nombre, Descripcion } = req.body;
+    const r = await pool.request()
+      .input('Nombre',      sql.NVarChar(200), Nombre || '')
+      .input('Descripcion', sql.NVarChar(500), Descripcion || null)
+      .query('INSERT INTO PuntosRevision (Nombre,Descripcion) VALUES (@Nombre,@Descripcion); SELECT SCOPE_IDENTITY() AS id');
+    res.json({ ok: true, id: r.recordset[0].id });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/seguridad/puntos-revision/:id', autenticar, soloAdmin, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const { Nombre, Descripcion, Activo } = req.body;
+    await pool.request()
+      .input('id',          sql.Int,           Number(req.params.id))
+      .input('Nombre',      sql.NVarChar(200), Nombre || '')
+      .input('Descripcion', sql.NVarChar(500), Descripcion || null)
+      .input('Activo',      sql.Bit,           Activo !== false ? 1 : 0)
+      .query('UPDATE PuntosRevision SET Nombre=@Nombre,Descripcion=@Descripcion,Activo=@Activo WHERE PuntoRevisionId=@id');
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/seguridad/puntos-revision/:id/areas', autenticar, soloAdmin, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const { Nombre } = req.body;
+    const r = await pool.request()
+      .input('PuntoRevisionId', sql.Int,           Number(req.params.id))
+      .input('Nombre',          sql.NVarChar(200), Nombre || '')
+      .query('INSERT INTO AreasRevision (PuntoRevisionId,Nombre) VALUES (@PuntoRevisionId,@Nombre); SELECT SCOPE_IDENTITY() AS id');
+    res.json({ ok: true, id: r.recordset[0].id });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/seguridad/areas/:id', autenticar, soloAdmin, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const { Nombre, Activo } = req.body;
+    await pool.request()
+      .input('id',     sql.Int,           Number(req.params.id))
+      .input('Nombre', sql.NVarChar(200), Nombre || '')
+      .input('Activo', sql.Bit,           Activo !== false ? 1 : 0)
+      .query('UPDATE AreasRevision SET Nombre=@Nombre,Activo=@Activo WHERE AreaRevisionId=@id');
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Rondines ──────────────────────────────────────────────────────────────────
+
+app.get('/api/seguridad/rondines', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const r = await pool.request().query(`
+      SELECT r.*,
+        (SELECT COUNT(*) FROM RondinesRegistros WHERE RondinId=r.RondinId) AS TotalAreas,
+        (SELECT COUNT(*) FROM RondinesRegistros WHERE RondinId=r.RondinId AND Revisado=1) AS AreasRevisadas,
+        (SELECT COUNT(*) FROM RondinesRegistros WHERE RondinId=r.RondinId AND TieneIncidencia=1) AS TotalIncidencias
+      FROM Rondines r ORDER BY r.FechaCreacion DESC
+    `);
+    res.json(r.recordset);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/seguridad/rondines', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const guardia = req.usuario?.nombre || '';
+    const r = await pool.request()
+      .input('Guardia',     sql.NVarChar(200), guardia)
+      .input('FechaInicio', sql.DateTime2,     new Date())
+      .query(`INSERT INTO Rondines (Guardia,FechaInicio,Estado) VALUES (@Guardia,@FechaInicio,'en_curso'); SELECT SCOPE_IDENTITY() AS id`);
+    const rondinId = r.recordset[0].id;
+    const folio    = generateSegFolio('RND', rondinId);
+    await pool.request()
+      .input('id',    sql.Int,          rondinId)
+      .input('Folio', sql.NVarChar(50), folio)
+      .query('UPDATE Rondines SET Folio=@Folio WHERE RondinId=@id');
+
+    const puntos = await pool.request().query(`
+      SELECT ar.AreaRevisionId, ar.PuntoRevisionId
+      FROM AreasRevision ar
+      JOIN PuntosRevision pr ON ar.PuntoRevisionId=pr.PuntoRevisionId
+      WHERE ar.Activo=1 AND pr.Activo=1
+    `);
+    for (const p of puntos.recordset) {
+      await pool.request()
+        .input('RondinId',        sql.Int, rondinId)
+        .input('PuntoRevisionId', sql.Int, p.PuntoRevisionId)
+        .input('AreaRevisionId',  sql.Int, p.AreaRevisionId)
+        .query('INSERT INTO RondinesRegistros (RondinId,PuntoRevisionId,AreaRevisionId,Revisado) VALUES (@RondinId,@PuntoRevisionId,@AreaRevisionId,0)');
+    }
+    res.json({ ok: true, rondinId, folio });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/seguridad/rondines/:id', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const id = Number(req.params.id);
+    const r  = await pool.request().input('id', sql.Int, id).query('SELECT * FROM Rondines WHERE RondinId=@id');
+    if (!r.recordset.length) return res.status(404).json({ error: 'Rondín no encontrado' });
+    const registros = await pool.request().input('id', sql.Int, id).query(`
+      SELECT rr.*, pr.Nombre AS PuntoNombre, ar.Nombre AS AreaNombre
+      FROM RondinesRegistros rr
+      LEFT JOIN PuntosRevision pr ON rr.PuntoRevisionId=pr.PuntoRevisionId
+      LEFT JOIN AreasRevision  ar ON rr.AreaRevisionId=ar.AreaRevisionId
+      WHERE rr.RondinId=@id
+      ORDER BY pr.Nombre, ar.Nombre
+    `);
+    res.json({ ...r.recordset[0], registros: registros.recordset });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/seguridad/rondines/:id/registro/:registroId', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const rondinId   = Number(req.params.id);
+    const registroId = Number(req.params.registroId);
+    const { TieneIncidencia, NivelSeveridad, DescripcionIncidencia, RequiereMantenimiento } = req.body;
+    await pool.request()
+      .input('id',                    sql.Int,           registroId)
+      .input('HoraRevision',          sql.DateTime2,     new Date())
+      .input('TieneIncidencia',       sql.Bit,           TieneIncidencia       ? 1 : 0)
+      .input('NivelSeveridad',        sql.NVarChar(20),  NivelSeveridad        || null)
+      .input('DescripcionIncidencia', sql.NVarChar(4000),DescripcionIncidencia || null)
+      .input('RequiereMantenimiento', sql.Bit,           RequiereMantenimiento ? 1 : 0)
+      .query(`UPDATE RondinesRegistros SET
+        Revisado=1, HoraRevision=@HoraRevision,
+        TieneIncidencia=@TieneIncidencia, NivelSeveridad=@NivelSeveridad,
+        DescripcionIncidencia=@DescripcionIncidencia, RequiereMantenimiento=@RequiereMantenimiento
+        WHERE RegistroId=@id`);
+    res.json({ ok: true });
+
+    if (TieneIncidencia) {
+      ;(async () => {
+        try {
+          const ron = await pool.request().input('id', sql.Int, rondinId)
+            .query('SELECT Folio, Guardia FROM Rondines WHERE RondinId=@id');
+          const reg = await pool.request().input('id', sql.Int, registroId).query(`
+            SELECT rr.*, pr.Nombre AS PuntoNombre, ar.Nombre AS AreaNombre
+            FROM RondinesRegistros rr
+            LEFT JOIN PuntosRevision pr ON rr.PuntoRevisionId=pr.PuntoRevisionId
+            LEFT JOIN AreasRevision  ar ON rr.AreaRevisionId=ar.AreaRevisionId
+            WHERE rr.RegistroId=@id
+          `);
+          if (!ron.recordset.length || !reg.recordset.length) return;
+          const rondin   = ron.recordset[0];
+          const registro = reg.recordset[0];
+          const html = emailIncidenciaSeguridad(rondin.Folio, registro.PuntoNombre, registro.AreaNombre,
+            NivelSeveridad, DescripcionIncidencia, rondin.Guardia);
+          if (NivelSeveridad === 'critica') {
+            const admins = await getEmailsPorRoles(['admin']);
+            if (admins.length) sendMail(admins, `⚠️ Incidencia CRÍTICA en rondín ${rondin.Folio}`, html);
+          }
+          if (RequiereMantenimiento) {
+            const mant = await getEmailsPorRoles(['mantenimiento', 'jefe_mantenimiento']);
+            if (mant.length) sendMail(mant, `Incidencia en rondín ${rondin.Folio} requiere mantenimiento`, html);
+          }
+        } catch (e) { console.log('Email incidencia rondín:', e.message); }
+      })();
+    }
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/seguridad/rondines/:id/finalizar', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const id = Number(req.params.id);
+    const { Observaciones } = req.body;
+    await pool.request()
+      .input('id',           sql.Int,           id)
+      .input('FechaFin',     sql.DateTime2,     new Date())
+      .input('Observaciones',sql.NVarChar(4000),Observaciones || null)
+      .query(`UPDATE Rondines SET Estado='finalizado',FechaFin=@FechaFin,Observaciones=@Observaciones WHERE RondinId=@id`);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Revisiones de Extintores ──────────────────────────────────────────────────
+
+app.get('/api/seguridad/extintores/:id/revisiones', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const r = await pool.request()
+      .input('id', sql.Int, Number(req.params.id))
+      .query('SELECT * FROM RevisionesExtintores WHERE ExtintorId=@id ORDER BY FechaRevision DESC');
+    res.json(r.recordset);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/seguridad/revisiones-extintores', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const d       = req.body;
+    const guardia = req.usuario?.nombre || '';
+    const r = await pool.request()
+      .input('ExtintorId',         sql.Int,           Number(d.ExtintorId))
+      .input('Guardia',            sql.NVarChar(200), d.Guardia || guardia)
+      .input('FechaRevision',      sql.Date,          d.FechaRevision || new Date().toISOString().substring(0, 10))
+      .input('PresionAdecuada',    sql.Bit,           d.PresionAdecuada    ? 1 : 0)
+      .input('CondicionFisica',    sql.NVarChar(100), d.CondicionFisica    || null)
+      .input('VencimientoVigente', sql.Bit,           d.VencimientoVigente ? 1 : 0)
+      .input('Observaciones',      sql.NVarChar(4000),d.Observaciones      || null)
+      .query(`INSERT INTO RevisionesExtintores
+        (ExtintorId,Guardia,FechaRevision,PresionAdecuada,CondicionFisica,VencimientoVigente,Observaciones)
+        VALUES (@ExtintorId,@Guardia,@FechaRevision,@PresionAdecuada,@CondicionFisica,@VencimientoVigente,@Observaciones);
+        SELECT SCOPE_IDENTITY() AS id`);
+    res.json({ ok: true, id: r.recordset[0].id });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Visitas ───────────────────────────────────────────────────────────────────
+
+app.get('/api/seguridad/visitas', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const { fecha } = req.query;
+    const req2 = pool.request();
+    let q = 'SELECT * FROM Visitas';
+    if (fecha) { q += ' WHERE CAST(FechaCreacion AS DATE)=@fecha'; req2.input('fecha', sql.Date, fecha); }
+    q += ' ORDER BY FechaCreacion DESC';
+    const r = await req2.query(q);
+    res.json(r.recordset);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/seguridad/visitas', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const d       = req.body;
+    const guardia = req.usuario?.nombre || '';
+    const r = await pool.request()
+      .input('NombreVisitante', sql.NVarChar(300), d.NombreVisitante || '')
+      .input('Empresa',         sql.NVarChar(200), d.Empresa         || null)
+      .input('Documento',       sql.NVarChar(100), d.Documento       || null)
+      .input('TipoVisita',      sql.NVarChar(50),  d.TipoVisita      || 'general')
+      .input('AQuienVisita',    sql.NVarChar(300), d.AQuienVisita    || null)
+      .input('Motivo',          sql.NVarChar(500), d.Motivo          || null)
+      .input('HoraEntrada',     sql.DateTime2,     new Date())
+      .input('Guardia',         sql.NVarChar(200), guardia)
+      .query(`INSERT INTO Visitas (NombreVisitante,Empresa,Documento,TipoVisita,AQuienVisita,Motivo,HoraEntrada,Guardia)
+              VALUES (@NombreVisitante,@Empresa,@Documento,@TipoVisita,@AQuienVisita,@Motivo,@HoraEntrada,@Guardia);
+              SELECT SCOPE_IDENTITY() AS id`);
+    const visitaId = r.recordset[0].id;
+    const folio    = generateSegFolio('VIS', visitaId);
+    await pool.request().input('id', sql.Int, visitaId).input('Folio', sql.NVarChar(50), folio)
+      .query('UPDATE Visitas SET Folio=@Folio WHERE VisitaId=@id');
+    res.json({ ok: true, visitaId, folio });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/seguridad/visitas/:id/salida', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const { Observaciones } = req.body;
+    await pool.request()
+      .input('id',           sql.Int,           Number(req.params.id))
+      .input('HoraSalida',   sql.DateTime2,     new Date())
+      .input('Observaciones',sql.NVarChar(4000),Observaciones || null)
+      .query('UPDATE Visitas SET HoraSalida=@HoraSalida,Observaciones=@Observaciones WHERE VisitaId=@id');
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Órdenes de Vehículo ───────────────────────────────────────────────────────
+
+app.get('/api/seguridad/ordenes-vehiculo', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const { estado, mine } = req.query;
+    const req2 = pool.request();
+    let q = `SELECT ov.*, ISNULL(v.Marca+' '+v.Modelo+' ('+v.Placa+')','Sin vehículo') AS VehiculoNombre
+             FROM OrdenesVehiculo ov LEFT JOIN Vehiculos v ON ov.VehiculoId=v.VehiculoId WHERE 1=1`;
+    if (estado) { q += ' AND ov.Estado=@estado'; req2.input('estado', sql.NVarChar(50), estado); }
+    if (mine)   { q += ' AND ov.Solicitante=@sol'; req2.input('sol', sql.NVarChar(200), req.usuario?.nombre || ''); }
+    q += ' ORDER BY ov.FechaCreacion DESC';
+    const r = await req2.query(q);
+    res.json(r.recordset);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/seguridad/ordenes-vehiculo', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const d          = req.body;
+    const solicitante = req.usuario?.nombre || '';
+    const r = await pool.request()
+      .input('VehiculoId',          sql.Int,           d.VehiculoId ? Number(d.VehiculoId) : null)
+      .input('Solicitante',         sql.NVarChar(200), solicitante)
+      .input('Destino',             sql.NVarChar(300), d.Destino            || null)
+      .input('Motivo',              sql.NVarChar(500), d.Motivo             || null)
+      .input('FechaSalidaEstimada', sql.Date,          d.FechaSalidaEstimada|| null)
+      .input('HoraSalidaEstimada',  sql.NVarChar(10),  d.HoraSalidaEstimada || null)
+      .input('Pasajeros',           sql.Int,           d.Pasajeros ? Number(d.Pasajeros) : null)
+      .input('Observaciones',       sql.NVarChar(4000),d.Observaciones      || null)
+      .query(`INSERT INTO OrdenesVehiculo
+        (VehiculoId,Solicitante,Destino,Motivo,FechaSalidaEstimada,HoraSalidaEstimada,Pasajeros,Observaciones)
+        VALUES (@VehiculoId,@Solicitante,@Destino,@Motivo,@FechaSalidaEstimada,@HoraSalidaEstimada,@Pasajeros,@Observaciones);
+        SELECT SCOPE_IDENTITY() AS id`);
+    const ordenId = r.recordset[0].id;
+    const folio   = generateSegFolio('SV', ordenId);
+    await pool.request().input('id', sql.Int, ordenId).input('Folio', sql.NVarChar(50), folio)
+      .query('UPDATE OrdenesVehiculo SET Folio=@Folio WHERE OrdenVehiculoId=@id');
+    res.json({ ok: true, ordenId, folio });
+
+    ;(async () => {
+      try {
+        let vehiculoNombre = '-';
+        if (d.VehiculoId) {
+          const vr = await pool.request().input('vid', sql.Int, Number(d.VehiculoId))
+            .query("SELECT Marca+' '+Modelo+' ('+Placa+')' AS N FROM Vehiculos WHERE VehiculoId=@vid");
+          if (vr.recordset.length) vehiculoNombre = vr.recordset[0].N;
+        }
+        const encargados = await getEmailsPorRoles(['encargado_vehiculos', 'admin']);
+        if (encargados.length) sendMail(encargados, `Nueva Solicitud de Vehículo — ${folio}`,
+          emailSolicitudVehiculo(folio, vehiculoNombre, d.Destino, d.Motivo, d.FechaSalidaEstimada, d.HoraSalidaEstimada, solicitante));
+      } catch (e) { console.log('Email solicitud vehículo:', e.message); }
+    })();
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/seguridad/ordenes-vehiculo/:id/autorizar', autenticar, soloEncargadoVehiculos, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const id = Number(req.params.id);
+    await pool.request()
+      .input('id',               sql.Int,           id)
+      .input('AutorizadoPor',    sql.NVarChar(200), req.usuario?.nombre || '')
+      .input('FechaAutorizacion',sql.DateTime2,     new Date())
+      .query(`UPDATE OrdenesVehiculo SET Estado='autorizada',AutorizadoPor=@AutorizadoPor,FechaAutorizacion=@FechaAutorizacion WHERE OrdenVehiculoId=@id`);
+    res.json({ ok: true });
+
+    ;(async () => {
+      try {
+        const r = await pool.request().input('id', sql.Int, id).query(`
+          SELECT ov.Folio, ov.Destino, ov.Solicitante,
+            ISNULL(v.Marca+' '+v.Modelo+' ('+v.Placa+')','Sin vehículo') AS VehiculoNombre
+          FROM OrdenesVehiculo ov LEFT JOIN Vehiculos v ON ov.VehiculoId=v.VehiculoId
+          WHERE ov.OrdenVehiculoId=@id
+        `);
+        const orden = r.recordset[0];
+        if (!orden) return;
+        const emails = await getEmailDeUsuario(orden.Solicitante);
+        if (emails.length) sendMail(emails, `Solicitud ${orden.Folio} autorizada`,
+          emailVehiculoResuelto(orden.Folio, orden.VehiculoNombre, orden.Destino, 'autorizada', null));
+      } catch (e) { console.log('Email autorización vehículo:', e.message); }
+    })();
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/seguridad/ordenes-vehiculo/:id/rechazar', autenticar, soloEncargadoVehiculos, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const id = Number(req.params.id);
+    const { MotivoRechazo } = req.body;
+    await pool.request()
+      .input('id',            sql.Int,           id)
+      .input('AutorizadoPor', sql.NVarChar(200), req.usuario?.nombre || '')
+      .input('MotivoRechazo', sql.NVarChar(500), MotivoRechazo || null)
+      .query(`UPDATE OrdenesVehiculo SET Estado='rechazada',AutorizadoPor=@AutorizadoPor,MotivoRechazo=@MotivoRechazo WHERE OrdenVehiculoId=@id`);
+    res.json({ ok: true });
+
+    ;(async () => {
+      try {
+        const r = await pool.request().input('id', sql.Int, id).query(`
+          SELECT ov.Folio, ov.Destino, ov.Solicitante,
+            ISNULL(v.Marca+' '+v.Modelo+' ('+v.Placa+')','Sin vehículo') AS VehiculoNombre
+          FROM OrdenesVehiculo ov LEFT JOIN Vehiculos v ON ov.VehiculoId=v.VehiculoId
+          WHERE ov.OrdenVehiculoId=@id
+        `);
+        const orden = r.recordset[0];
+        if (!orden) return;
+        const emails = await getEmailDeUsuario(orden.Solicitante);
+        if (emails.length) sendMail(emails, `Solicitud ${orden.Folio} rechazada`,
+          emailVehiculoResuelto(orden.Folio, orden.VehiculoNombre, orden.Destino, 'rechazada', MotivoRechazo));
+      } catch (e) { console.log('Email rechazo vehículo:', e.message); }
+    })();
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/seguridad/ordenes-vehiculo/:id/salida', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const id = Number(req.params.id);
+    const { KmInicial } = req.body;
+    await pool.request()
+      .input('id',                  sql.Int,           id)
+      .input('HoraSalidaReal',      sql.DateTime2,     new Date())
+      .input('KmInicial',           sql.Decimal(10,2), KmInicial ? Number(KmInicial) : null)
+      .input('RegistradoPorSalida', sql.NVarChar(200), req.usuario?.nombre || '')
+      .query(`UPDATE OrdenesVehiculo SET Estado='en_curso',HoraSalidaReal=@HoraSalidaReal,KmInicial=@KmInicial,RegistradoPorSalida=@RegistradoPorSalida WHERE OrdenVehiculoId=@id`);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/seguridad/ordenes-vehiculo/:id/llegada', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const id = Number(req.params.id);
+    const { KmFinal, Observaciones } = req.body;
+    await pool.request()
+      .input('id',                   sql.Int,           id)
+      .input('HoraLlegada',          sql.DateTime2,     new Date())
+      .input('KmFinal',              sql.Decimal(10,2), KmFinal ? Number(KmFinal) : null)
+      .input('Observaciones',        sql.NVarChar(4000),Observaciones || null)
+      .input('RegistradoPorLlegada', sql.NVarChar(200), req.usuario?.nombre || '')
+      .query(`UPDATE OrdenesVehiculo SET Estado='completada',HoraLlegada=@HoraLlegada,KmFinal=@KmFinal,Observaciones=@Observaciones,RegistradoPorLlegada=@RegistradoPorLlegada WHERE OrdenVehiculoId=@id`);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Dashboard de Seguridad ────────────────────────────────────────────────────
+
+app.get('/api/seguridad/dashboard', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const hoy = new Date().toISOString().substring(0, 10);
+    const [rondines, visitas, vehiculos, incidencias] = await Promise.all([
+      pool.request().input('hoy', sql.Date, hoy).query(
+        `SELECT COUNT(*) AS hoy, SUM(CASE WHEN Estado='en_curso' THEN 1 ELSE 0 END) AS activos
+         FROM Rondines WHERE CAST(FechaCreacion AS DATE)=@hoy`),
+      pool.request().input('hoy', sql.Date, hoy).query(
+        `SELECT COUNT(*) AS hoy, SUM(CASE WHEN HoraSalida IS NULL THEN 1 ELSE 0 END) AS activos
+         FROM Visitas WHERE CAST(FechaCreacion AS DATE)=@hoy`),
+      pool.request().query(`SELECT Estado, COUNT(*) AS total FROM OrdenesVehiculo GROUP BY Estado`),
+      pool.request().query(`SELECT COUNT(*) AS total FROM RondinesRegistros WHERE TieneIncidencia=1`),
+    ]);
+    const estadosV = {};
+    vehiculos.recordset.forEach(r => { estadosV[r.Estado] = r.total; });
+    res.json({
+      rondinesHoy:        rondines.recordset[0].hoy     || 0,
+      rondinesActivos:    rondines.recordset[0].activos  || 0,
+      visitasHoy:         visitas.recordset[0].hoy       || 0,
+      visitasAdentro:     visitas.recordset[0].activos   || 0,
+      vehiculosPendientes:estadosV.pendiente  || 0,
+      vehiculosEnCurso:   estadosV.en_curso   || 0,
+      totalIncidencias:   incidencias.recordset[0].total || 0,
+    });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
