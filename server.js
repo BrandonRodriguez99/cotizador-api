@@ -10,7 +10,7 @@ const fs = require("fs");
 
 const SMTP_USER = process.env.SMTP_USER || "";
 const SMTP_PASS = process.env.SMTP_PASS || "";
-const APP_URL   = process.env.APP_URL   || "http://localhost:5173";
+const APP_URL   = process.env.APP_URL   || "https://cotizador-web-coral.vercel.app";
 
 const app = express();
 const JWT_SECRET = process.env.JWT_SECRET || "udat-cotizador-secret-2024";
@@ -1881,11 +1881,21 @@ app.post("/api/cotizaciones", async (req, res) => {
       Promise.all([
         getEmailsDeRol("autorizador1"),
         getEmailDeUsuario(d.creadoPor),
-      ]).then(([emailsAut, emailsCreador]) => {
+        d.clienteId
+          ? pool.request().input('_cid', sql.Int, Number(d.clienteId))
+              .query('SELECT Nombre FROM Empresas WHERE EmpresaId=@_cid')
+              .then(r => r.recordset[0]?.Nombre || null).catch(() => null)
+          : Promise.resolve(null),
+        d.cursoId
+          ? pool.request().input('_cuid', sql.Int, Number(d.cursoId))
+              .query('SELECT Nombre FROM Cursos WHERE CursoId=@_cuid')
+              .then(r => r.recordset[0]?.Nombre || null).catch(() => null)
+          : Promise.resolve(null),
+      ]).then(([emailsAut, emailsCreador, clienteNombre, cursoNombre]) => {
         if (emailsAut.length) {
           console.log(`📧 Cotización ${d.folio} → autorizador1`);
           sendMail(emailsAut, `Nueva cotización ${d.folio} requiere su aprobación`,
-            emailCotizacionPendiente(d.folio, null, null, d.totalConGanancia, d.creadoPor));
+            emailCotizacionPendiente(d.folio, clienteNombre, cursoNombre, d.totalConGanancia, d.creadoPor));
         }
         if (emailsCreador.length) {
           console.log(`📧 Cotización ${d.folio} → creador (${d.creadoPor})`);
