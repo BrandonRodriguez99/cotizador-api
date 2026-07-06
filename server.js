@@ -4054,12 +4054,12 @@ app.post('/api/upload/foto-rondin', autenticar, async (req, res) => {
     const result = await cloudinary.uploader.upload(base64, {
       folder: 'rondines',
       resource_type: 'image',
-      transformation: [{ quality: 'auto', fetch_format: 'auto' }],
     });
+    console.log(`✅ Foto subida a Cloudinary: ${result.secure_url}`);
     res.json({ url: result.secure_url });
   } catch (err) {
-    console.log('❌ Error subiendo foto a Cloudinary:', err.message);
-    res.status(500).json({ error: 'No se pudo subir la imagen' });
+    console.log('❌ Error Cloudinary:', err.http_code, err.message, JSON.stringify(err));
+    res.status(500).json({ error: err.message || 'No se pudo subir la imagen' });
   }
 });
 
