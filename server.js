@@ -3919,8 +3919,10 @@ app.post('/api/seguridad/ordenes-vehiculo', autenticar, async (req, res) => {
           if (vr.recordset.length) vehiculoNombre = vr.recordset[0].N;
         }
         const encargados = await getEmailsPorRoles(['encargado_vehiculos', 'admin']);
-        if (encargados.length) sendMail(encargados, `Nueva Solicitud de Vehículo — ${folio}`,
-          emailSolicitudVehiculo(folio, vehiculoNombre, d.Destino, d.Motivo, d.FechaSalidaEstimada, d.HoraSalidaEstimada, solicitante));
+        console.log(`📧 Solicitud vehículo ${folio}: ${encargados.length} destinatarios → ${JSON.stringify(encargados)}`);
+        if (encargados.length)
+          sendMail(encargados, `Nueva Solicitud de Vehículo — ${folio}`,
+            emailSolicitudVehiculo(folio, vehiculoNombre, d.Destino, d.Motivo, d.FechaSalidaEstimada, d.HoraSalidaEstimada, solicitante));
       } catch (e) { console.log('Email solicitud vehículo:', e.message); }
     })();
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -4061,6 +4063,59 @@ app.post('/api/upload/foto-rondin', autenticar, async (req, res) => {
     console.log('❌ Error Cloudinary:', err.http_code, err.message, JSON.stringify(err));
     res.status(500).json({ error: err.message || 'No se pudo subir la imagen' });
   }
+});
+
+// ── Endpoints públicos (sin autenticación) ────────────────────────────────────
+
+app.get('/api/public/vehiculos', async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const r = await pool.request()
+      .query('SELECT VehiculoId, Marca, Modelo, Placa, Color, Capacidad FROM Vehiculos WHERE Activo=1 ORDER BY Marca, Modelo');
+    res.json(r.recordset);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/public/solicitud-vehiculo', async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const d = req.body;
+    if (!d.Solicitante || !d.Destino || !d.FechaSalidaEstimada)
+      return res.status(400).json({ error: 'Faltan campos obligatorios: Solicitante, Destino, FechaSalidaEstimada' });
+    const r = await pool.request()
+      .input('VehiculoId',          sql.Int,            d.VehiculoId ? Number(d.VehiculoId) : null)
+      .input('Solicitante',         sql.NVarChar(200),  d.Solicitante)
+      .input('Destino',             sql.NVarChar(300),  d.Destino            || null)
+      .input('Motivo',              sql.NVarChar(500),  d.Motivo             || null)
+      .input('FechaSalidaEstimada', sql.Date,           d.FechaSalidaEstimada|| null)
+      .input('HoraSalidaEstimada',  sql.NVarChar(10),   d.HoraSalidaEstimada || null)
+      .input('Pasajeros',           sql.Int,            d.Pasajeros ? Number(d.Pasajeros) : null)
+      .input('Observaciones',       sql.NVarChar(4000), d.Observaciones      || null)
+      .query(`INSERT INTO OrdenesVehiculo
+        (VehiculoId,Solicitante,Destino,Motivo,FechaSalidaEstimada,HoraSalidaEstimada,Pasajeros,Observaciones)
+        VALUES (@VehiculoId,@Solicitante,@Destino,@Motivo,@FechaSalidaEstimada,@HoraSalidaEstimada,@Pasajeros,@Observaciones);
+        SELECT SCOPE_IDENTITY() AS id`);
+    const ordenId = r.recordset[0].id;
+    const folio   = generateSegFolio('SV', ordenId);
+    await pool.request().input('id', sql.Int, ordenId).input('Folio', sql.NVarChar(50), folio)
+      .query('UPDATE OrdenesVehiculo SET Folio=@Folio WHERE OrdenVehiculoId=@id');
+    res.json({ ok: true, ordenId, folio });
+    ;(async () => {
+      try {
+        let vehiculoNombre = 'No especificado';
+        if (d.VehiculoId) {
+          const vr = await pool.request().input('vid', sql.Int, Number(d.VehiculoId))
+            .query("SELECT Marca+' '+Modelo+' ('+Placa+')' AS N FROM Vehiculos WHERE VehiculoId=@vid");
+          if (vr.recordset.length) vehiculoNombre = vr.recordset[0].N;
+        }
+        const encargados = await getEmailsPorRoles(['encargado_vehiculos', 'admin']);
+        console.log(`📧 Solicitud vehículo (pública) ${folio}: ${encargados.length} destinatarios → ${JSON.stringify(encargados)}`);
+        if (encargados.length)
+          sendMail(encargados, `Nueva Solicitud de Vehículo — ${folio}`,
+            emailSolicitudVehiculo(folio, vehiculoNombre, d.Destino, d.Motivo, d.FechaSalidaEstimada, d.HoraSalidaEstimada, d.Solicitante));
+      } catch (e) { console.log('Email solicitud vehículo pública:', e.message); }
+    })();
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ─── SERVER ───────────────────────────────────────────────────────────────────
