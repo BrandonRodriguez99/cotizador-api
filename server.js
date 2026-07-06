@@ -650,6 +650,7 @@ const mailer = SMTP_USER && SMTP_PASS
       requireTLS: true,
       auth: { user: SMTP_USER, pass: SMTP_PASS },
       tls: { rejectUnauthorized: false },
+      family: 4,
     })
   : null;
 
