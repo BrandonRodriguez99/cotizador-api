@@ -7,10 +7,17 @@ const jwt = require("jsonwebtoken");
 const nodemailer = require("nodemailer");
 const path = require("path");
 const fs = require("fs");
+const cloudinary = require("cloudinary").v2;
 
 const SMTP_USER = process.env.SMTP_USER || "";
 const SMTP_PASS = process.env.SMTP_PASS || "";
 const APP_URL   = process.env.APP_URL   || "https://cotizador-web-coral.vercel.app";
+
+cloudinary.config({
+  cloud_name:  process.env.CLOUDINARY_CLOUD_NAME  || "kcj1hrdy",
+  api_key:     process.env.CLOUDINARY_API_KEY     || "141477992514236",
+  api_secret:  process.env.CLOUDINARY_API_SECRET  || "EzH_SCIZtJm9t902Wopf8lwwjOc",
+});
 
 const app = express();
 const JWT_SECRET = process.env.JWT_SECRET || "udat-cotizador-secret-2024";
@@ -617,6 +624,13 @@ sql
               FechaCreacion        DATETIME2      NOT NULL DEFAULT SYSUTCDATETIME()
             );
           END
+        `);
+        // Columnas adicionales en RondinesRegistros (agregadas en v2)
+        await pool.request().query(`
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.RondinesRegistros') AND name='FotoUrl')
+            ALTER TABLE dbo.RondinesRegistros ADD FotoUrl NVARCHAR(500) NULL;
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.RondinesRegistros') AND name='OrdenMantenimientoId')
+            ALTER TABLE dbo.RondinesRegistros ADD OrdenMantenimientoId INT NULL;
         `);
         console.log("✅ Tablas de seguridad aseguradas");
 
@@ -3659,20 +3673,67 @@ app.put('/api/seguridad/rondines/:id/registro/:registroId', autenticar, async (r
     if (!ensurePool(res)) return;
     const rondinId   = Number(req.params.id);
     const registroId = Number(req.params.registroId);
-    const { TieneIncidencia, NivelSeveridad, DescripcionIncidencia, RequiereMantenimiento } = req.body;
+    const { TieneIncidencia, NivelSeveridad, DescripcionIncidencia, RequiereMantenimiento, FotoUrl } = req.body;
     await pool.request()
-      .input('id',                    sql.Int,           registroId)
-      .input('HoraRevision',          sql.DateTime2,     new Date())
-      .input('TieneIncidencia',       sql.Bit,           TieneIncidencia       ? 1 : 0)
-      .input('NivelSeveridad',        sql.NVarChar(20),  NivelSeveridad        || null)
-      .input('DescripcionIncidencia', sql.NVarChar(4000),DescripcionIncidencia || null)
-      .input('RequiereMantenimiento', sql.Bit,           RequiereMantenimiento ? 1 : 0)
+      .input('id',                    sql.Int,            registroId)
+      .input('HoraRevision',          sql.DateTime2,      new Date())
+      .input('TieneIncidencia',       sql.Bit,            TieneIncidencia       ? 1 : 0)
+      .input('NivelSeveridad',        sql.NVarChar(20),   NivelSeveridad        || null)
+      .input('DescripcionIncidencia', sql.NVarChar(4000), DescripcionIncidencia || null)
+      .input('RequiereMantenimiento', sql.Bit,            RequiereMantenimiento ? 1 : 0)
+      .input('FotoUrl',               sql.NVarChar(500),  FotoUrl               || null)
       .query(`UPDATE RondinesRegistros SET
         Revisado=1, HoraRevision=@HoraRevision,
         TieneIncidencia=@TieneIncidencia, NivelSeveridad=@NivelSeveridad,
-        DescripcionIncidencia=@DescripcionIncidencia, RequiereMantenimiento=@RequiereMantenimiento
+        DescripcionIncidencia=@DescripcionIncidencia, RequiereMantenimiento=@RequiereMantenimiento,
+        FotoUrl=@FotoUrl
         WHERE RegistroId=@id`);
-    res.json({ ok: true });
+
+    // Si requiere mantenimiento, crear OM automáticamente
+    let omFolio = null;
+    if (RequiereMantenimiento) {
+      try {
+        const reg = await pool.request().input('id', sql.Int, registroId).query(`
+          SELECT rr.*, pr.Nombre AS PuntoNombre, ar.Nombre AS AreaNombre
+          FROM RondinesRegistros rr
+          LEFT JOIN PuntosRevision pr ON rr.PuntoRevisionId=pr.PuntoRevisionId
+          LEFT JOIN AreasRevision  ar ON rr.AreaRevisionId=ar.AreaRevisionId
+          WHERE rr.RegistroId=@id
+        `);
+        const ron = await pool.request().input('id', sql.Int, rondinId)
+          .query('SELECT Folio, Guardia FROM Rondines WHERE RondinId=@id');
+        if (reg.recordset.length && ron.recordset.length) {
+          const registro = reg.recordset[0];
+          const rondin   = ron.recordset[0];
+          const omR = await pool.request()
+            .input('Departamento',     sql.NVarChar(200),    registro.PuntoNombre  || null)
+            .input('FechaReporte',     sql.Date,             new Date())
+            .input('NombreSolicita',   sql.NVarChar(300),    rondin.Guardia        || null)
+            .input('Equipo',           sql.NVarChar(200),    registro.AreaNombre   || null)
+            .input('RazonOrden',       sql.NVarChar(100),    'correctivo')
+            .input('DescripcionFalla', sql.NVarChar(sql.MAX),
+              `Incidencia detectada en rondín ${rondin.Folio}. Área: ${registro.AreaNombre}. ${DescripcionIncidencia || ''}`)
+            .input('CreadoPor',        sql.NVarChar(150),    rondin.Guardia        || null)
+            .query(`INSERT INTO OrdenesMantenimiento
+              (Departamento,FechaReporte,NombreSolicita,Equipo,RazonOrden,DescripcionFalla,CreadoPor,Estado)
+              VALUES (@Departamento,@FechaReporte,@NombreSolicita,@Equipo,@RazonOrden,@DescripcionFalla,@CreadoPor,'Pendiente');
+              SELECT SCOPE_IDENTITY() AS id;`);
+          const omId  = omR.recordset[0].id;
+          const year  = new Date().getFullYear();
+          omFolio = `OM-${year}-${String(omId).padStart(6, '0')}`;
+          await pool.request()
+            .input('folio', sql.NVarChar(50), omFolio)
+            .input('id',    sql.Int,          omId)
+            .query('UPDATE OrdenesMantenimiento SET Folio=@folio WHERE OrdenMantenimientoId=@id');
+          await pool.request()
+            .input('omId', sql.Int, omId)
+            .input('regId', sql.Int, registroId)
+            .query('UPDATE RondinesRegistros SET OrdenMantenimientoId=@omId WHERE RegistroId=@regId');
+        }
+      } catch (e) { console.log('❌ Error creando OM desde rondín:', e.message); }
+    }
+
+    res.json({ ok: true, omFolio });
 
     if (TieneIncidencia) {
       ;(async () => {
@@ -3697,7 +3758,10 @@ app.put('/api/seguridad/rondines/:id/registro/:registroId', autenticar, async (r
           }
           if (RequiereMantenimiento) {
             const mant = await getEmailsPorRoles(['mantenimiento', 'jefe_mantenimiento']);
-            if (mant.length) sendMail(mant, `Incidencia en rondín ${rondin.Folio} requiere mantenimiento`, html);
+            const asunto = omFolio
+              ? `Incidencia en rondín ${rondin.Folio} — OM ${omFolio} generada automáticamente`
+              : `Incidencia en rondín ${rondin.Folio} requiere mantenimiento`;
+            if (mant.length) sendMail(mant, asunto, html);
           }
         } catch (e) { console.log('Email incidencia rondín:', e.message); }
       })();
@@ -3980,6 +4044,23 @@ app.get('/api/seguridad/dashboard', autenticar, async (req, res) => {
       totalIncidencias:   incidencias.recordset[0].total || 0,
     });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ─── UPLOAD FOTO (Cloudinary) ─────────────────────────────────────────────────
+app.post('/api/upload/foto-rondin', autenticar, async (req, res) => {
+  try {
+    const { base64 } = req.body;
+    if (!base64) return res.status(400).json({ error: 'No se recibió imagen' });
+    const result = await cloudinary.uploader.upload(base64, {
+      folder: 'rondines',
+      resource_type: 'image',
+      transformation: [{ quality: 'auto', fetch_format: 'auto' }],
+    });
+    res.json({ url: result.secure_url });
+  } catch (err) {
+    console.log('❌ Error subiendo foto a Cloudinary:', err.message);
+    res.status(500).json({ error: 'No se pudo subir la imagen' });
+  }
 });
 
 // ─── SERVER ───────────────────────────────────────────────────────────────────
