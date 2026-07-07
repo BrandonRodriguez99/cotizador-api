@@ -4123,6 +4123,22 @@ app.post('/api/public/solicitud-vehiculo', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── Diagnóstico SMTP ──────────────────────────────────────────────────────────
+app.get('/api/debug/test-email', async (req, res) => {
+  if (!mailer) return res.json({ ok: false, error: 'mailer es null — SMTP_USER o SMTP_PASS no están configurados en Render' });
+  try {
+    await mailer.sendMail({
+      from: `"Sistema UDAT" <${SMTP_USER}>`,
+      to: SMTP_USER,
+      subject: 'Test SMTP — Sistema UDAT',
+      html: '<p>Este es un correo de prueba del sistema UDAT.</p>',
+    });
+    res.json({ ok: true, message: `Email enviado a ${SMTP_USER}` });
+  } catch (e) {
+    res.json({ ok: false, error: e.message, code: e.code });
+  }
+});
+
 // ─── SERVER ───────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => console.log(`🚀 Servidor corriendo en puerto ${PORT}`));
