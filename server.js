@@ -650,6 +650,7 @@ const mailTransporter = nodemailer.createTransport({
   host: "smtp.gmail.com",
   port: 587,
   secure: false,
+  family: 4,
   auth: { user: GMAIL_USER, pass: GMAIL_APP_PASS },
 });
 
