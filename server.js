@@ -643,51 +643,26 @@ sql
   .catch((err) => console.log("❌ Error SQL:", err));
 
 // ─── Email helpers ────────────────────────────────────────────────────────────
-let mailer = null;
-
-(async () => {
-  if (!SMTP_USER || !SMTP_PASS) {
-    console.log("⚠️ SMTP no configurado (SMTP_USER / SMTP_PASS ausentes)");
-    return;
-  }
-  let smtpHost = "smtp.office365.com";
-  try {
-    const addrs = await require("dns").promises.resolve4("smtp.office365.com");
-    smtpHost = addrs[0];
-    console.log(`📧 SMTP DNS → IPv4 ${smtpHost}`);
-  } catch (e) {
-    console.log(`📧 DNS resolve4 falló, usando hostname: ${e.message}`);
-  }
-  mailer = nodemailer.createTransport({
-    host: smtpHost,
-    port: 587,
-    secure: false,
-    requireTLS: true,
-    auth: { user: SMTP_USER, pass: SMTP_PASS },
-    tls: { rejectUnauthorized: false, servername: "smtp.office365.com" },
-    connectionTimeout: 15000,
-    socketTimeout: 15000,
-    greetingTimeout: 15000,
-  });
-  mailer.verify((err) => {
-    if (err) console.log("⚠️ SMTP no conectó:", err.message);
-    else     console.log("✅ SMTP Office365 listo — correos habilitados");
-  });
-})();
+const { Resend } = require("resend");
+const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
+const resendClient = RESEND_API_KEY ? new Resend(RESEND_API_KEY) : null;
+if (resendClient) console.log("✅ Resend configurado — correos habilitados");
+else console.log("⚠️ RESEND_API_KEY no configurado — correos deshabilitados");
 
 async function sendMail(to, subject, html) {
-  if (!mailer || !to || !to.length) {
-    console.log(`⚠️ Email no enviado (${!mailer ? "SMTP sin config" : "sin destinatarios"}): ${subject}`);
+  if (!resendClient || !to || !to.length) {
+    console.log(`⚠️ Email no enviado (${!resendClient ? "Resend sin config" : "sin destinatarios"}): ${subject}`);
     return;
   }
   try {
-    await mailer.sendMail({
-      from: `"Sistema UDAT" <${SMTP_USER}>`,
-      to: to.join(","),
+    const { data, error } = await resendClient.emails.send({
+      from: "Sistema UDAT <reportes@udat.com.mx>",
+      to,
       subject,
       html,
     });
-    console.log(`✅ Email enviado a: ${to.join(",")}`);
+    if (error) throw new Error(JSON.stringify(error));
+    console.log(`✅ Email enviado a: ${to.join(",")} — id: ${data?.id}`);
   } catch (e) {
     console.log("⚠️ Error enviando email:", e.message);
   }
@@ -4131,19 +4106,21 @@ app.post('/api/public/solicitud-vehiculo', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ── Diagnóstico SMTP ──────────────────────────────────────────────────────────
+// ── Diagnóstico email ─────────────────────────────────────────────────────────
 app.get('/api/debug/test-email', async (req, res) => {
-  if (!mailer) return res.json({ ok: false, error: 'mailer es null — SMTP_USER o SMTP_PASS no están configurados en Render' });
+  if (!resendClient) return res.json({ ok: false, error: 'RESEND_API_KEY no configurado en Render' });
   try {
-    await mailer.sendMail({
-      from: `"Sistema UDAT" <${SMTP_USER}>`,
-      to: SMTP_USER,
-      subject: 'Test SMTP — Sistema UDAT',
-      html: '<p>Este es un correo de prueba del sistema UDAT.</p>',
+    const dest = req.query.to || SMTP_USER || "brandonrdz1999@gmail.com";
+    const { data, error } = await resendClient.emails.send({
+      from: "Sistema UDAT <reportes@udat.com.mx>",
+      to: [dest],
+      subject: 'Test Resend — Sistema UDAT',
+      html: '<p>Este es un correo de prueba del sistema UDAT via Resend.</p>',
     });
-    res.json({ ok: true, message: `Email enviado a ${SMTP_USER}` });
+    if (error) return res.json({ ok: false, error });
+    res.json({ ok: true, message: `Email enviado a ${dest}`, id: data?.id });
   } catch (e) {
-    res.json({ ok: false, error: e.message, code: e.code });
+    res.json({ ok: false, error: e.message });
   }
 });
 

@@ -21,7 +21,8 @@
     "jsonwebtoken": "^9.0.2",
     "mssql": "^12.5.4",
     "nodemailer": "^8.0.11",
-    "pdfkit": "^0.19.1"
+    "pdfkit": "^0.19.1",
+    "resend": "^6.17.1"
   },
   "devDependencies": {
     "nodemon": "^3.1.14"
