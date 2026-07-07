@@ -643,26 +643,37 @@ sql
   .catch((err) => console.log("❌ Error SQL:", err));
 
 // ─── Email helpers ────────────────────────────────────────────────────────────
-const sgMail = require("@sendgrid/mail");
-const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY || "";
-if (SENDGRID_API_KEY) {
-  sgMail.setApiKey(SENDGRID_API_KEY);
-  console.log("✅ SendGrid configurado — correos habilitados");
+const mailTransporter = nodemailer.createTransport({
+  host: "smtp.office365.com",
+  port: 587,
+  secure: false,
+  auth: { user: SMTP_USER, pass: SMTP_PASS },
+  tls: { rejectUnauthorized: false },
+});
+
+if (SMTP_USER && SMTP_PASS) {
+  console.log("✅ Office365 SMTP configurado — correos habilitados");
 } else {
-  console.log("⚠️ SENDGRID_API_KEY no configurado — correos deshabilitados");
+  console.log("⚠️ SMTP_USER/SMTP_PASS no configurado — correos deshabilitados");
 }
 
 async function sendMail(to, subject, html) {
   if (!to || !to.length) return;
-  if (!SENDGRID_API_KEY) {
+  if (!SMTP_USER || !SMTP_PASS) {
     console.log(`⚠️ Email no enviado: ${subject}`);
     return;
   }
   try {
-    await sgMail.send({ from: "Sistema UDAT <reportes@udat.com.mx>", to, subject, html });
-    console.log(`✅ Email enviado (SendGrid) a: ${Array.isArray(to) ? to.join(",") : to}`);
+    const toStr = Array.isArray(to) ? to.join(",") : to;
+    await mailTransporter.sendMail({
+      from: `"Sistema UDAT" <${SMTP_USER}>`,
+      to: toStr,
+      subject,
+      html,
+    });
+    console.log(`✅ Email enviado (Office365) a: ${toStr}`);
   } catch (e) {
-    console.log("⚠️ Error SendGrid:", e.response?.body?.errors?.[0]?.message || e.message);
+    console.log("⚠️ Error Office365 SMTP:", e.message);
   }
 }
 
@@ -4106,10 +4117,10 @@ app.post('/api/public/solicitud-vehiculo', async (req, res) => {
 
 // ── Diagnóstico email ─────────────────────────────────────────────────────────
 app.get('/api/debug/test-email', async (req, res) => {
-  if (!SENDGRID_API_KEY) return res.json({ ok: false, error: 'SENDGRID_API_KEY no configurado en Render' });
+  if (!SMTP_USER || !SMTP_PASS) return res.json({ ok: false, error: 'SMTP_USER/SMTP_PASS no configurado' });
   const dest = req.query.to || "brandon.rodriguez@udat.com.mx";
   try {
-    await sgMail.send({ from: "Sistema UDAT <reportes@udat.com.mx>", to: dest, subject: 'Test — Sistema UDAT', html: '<p>Correo de prueba del sistema UDAT.</p>' });
+    await mailTransporter.sendMail({ from: `"Sistema UDAT" <${SMTP_USER}>`, to: dest, subject: 'Test Office365 — Sistema UDAT', html: '<p>Correo de prueba via Office 365 SMTP.</p>' });
     res.json({ ok: true, message: `Email enviado a ${dest}` });
   } catch (e) {
     res.json({ ok: false, error: e.response?.body?.errors?.[0]?.message || e.message });
