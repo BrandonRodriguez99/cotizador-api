@@ -645,7 +645,13 @@ sql
 // ─── Email helpers ────────────────────────────────────────────────────────────
 const GMAIL_USER     = process.env.GMAIL_USER     || "sistemaudat@gmail.com";
 const GMAIL_APP_PASS = process.env.GMAIL_APP_PASS || "";
-const dnsPromises    = require("dns").promises;
+
+const mailTransporter = nodemailer.createTransport({
+  host: "smtp.gmail.com",
+  port: 587,
+  secure: false,
+  auth: { user: GMAIL_USER, pass: GMAIL_APP_PASS },
+});
 
 if (GMAIL_APP_PASS) {
   console.log("✅ Gmail SMTP configurado — correos habilitados");
@@ -660,16 +666,8 @@ async function sendMail(to, subject, html) {
     return;
   }
   try {
-    const [smtpIp] = await dnsPromises.resolve4("smtp.gmail.com");
-    const transporter = nodemailer.createTransport({
-      host: smtpIp,
-      port: 587,
-      secure: false,
-      tls: { servername: "smtp.gmail.com" },
-      auth: { user: GMAIL_USER, pass: GMAIL_APP_PASS },
-    });
     const toStr = Array.isArray(to) ? to.join(",") : to;
-    await transporter.sendMail({
+    await mailTransporter.sendMail({
       from: `"Sistema UDAT" <${GMAIL_USER}>`,
       to: toStr,
       subject,
@@ -4124,13 +4122,7 @@ app.get('/api/debug/test-email', async (req, res) => {
   if (!GMAIL_APP_PASS) return res.json({ ok: false, error: 'GMAIL_APP_PASS no configurado en Render' });
   const dest = req.query.to || "sistemaudat@gmail.com";
   try {
-    const [smtpIp] = await dnsPromises.resolve4("smtp.gmail.com");
-    const transporter = nodemailer.createTransport({
-      host: smtpIp, port: 587, secure: false,
-      tls: { servername: "smtp.gmail.com" },
-      auth: { user: GMAIL_USER, pass: GMAIL_APP_PASS },
-    });
-    await transporter.sendMail({
+    await mailTransporter.sendMail({
       from: `"Sistema UDAT" <${GMAIL_USER}>`,
       to: dest,
       subject: 'Test Gmail — Sistema UDAT',
