@@ -643,26 +643,38 @@ sql
   .catch((err) => console.log("❌ Error SQL:", err));
 
 // ─── Email helpers ────────────────────────────────────────────────────────────
-const sgMail = require("@sendgrid/mail");
-const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY || "";
-if (SENDGRID_API_KEY) {
-  sgMail.setApiKey(SENDGRID_API_KEY);
-  console.log("✅ SendGrid configurado — correos habilitados");
+const GMAIL_USER     = process.env.GMAIL_USER     || "sistemaudat@gmail.com";
+const GMAIL_APP_PASS = process.env.GMAIL_APP_PASS || "";
+
+const mailTransporter = nodemailer.createTransport({
+  host: "smtp.gmail.com",
+  port: 587,
+  secure: false,
+  auth: { user: GMAIL_USER, pass: GMAIL_APP_PASS },
+});
+
+if (GMAIL_APP_PASS) {
+  console.log("✅ Gmail SMTP configurado — correos habilitados");
 } else {
-  console.log("⚠️ SENDGRID_API_KEY no configurado — correos deshabilitados");
+  console.log("⚠️ GMAIL_APP_PASS no configurado — correos deshabilitados");
 }
 
 async function sendMail(to, subject, html) {
   if (!to || !to.length) return;
-  if (!SENDGRID_API_KEY) {
-    console.log(`⚠️ Email no enviado (SENDGRID_API_KEY no configurado): ${subject}`);
+  if (!GMAIL_APP_PASS) {
+    console.log(`⚠️ Email no enviado (GMAIL_APP_PASS no configurado): ${subject}`);
     return;
   }
   try {
-    await sgMail.send({ from: "Sistema UDAT <reportes@udat.com.mx>", to, subject, html });
-    console.log(`✅ Email enviado (SendGrid) a: ${to.join(",")}`);
+    await mailTransporter.sendMail({
+      from: `"Sistema UDAT" <${GMAIL_USER}>`,
+      to: Array.isArray(to) ? to.join(",") : to,
+      subject,
+      html,
+    });
+    console.log(`✅ Email enviado (Gmail) a: ${Array.isArray(to) ? to.join(",") : to}`);
   } catch (e) {
-    console.log("⚠️ Error SendGrid:", e.response?.body?.errors?.[0]?.message || e.message);
+    console.log("⚠️ Error Gmail SMTP:", e.message);
   }
 }
 
@@ -4106,14 +4118,14 @@ app.post('/api/public/solicitud-vehiculo', async (req, res) => {
 
 // ── Diagnóstico email ─────────────────────────────────────────────────────────
 app.get('/api/debug/test-email', async (req, res) => {
-  if (!SENDGRID_API_KEY) return res.json({ ok: false, error: 'SENDGRID_API_KEY no configurado en Render' });
+  if (!GMAIL_APP_PASS) return res.json({ ok: false, error: 'GMAIL_APP_PASS no configurado en Render' });
   const dest = req.query.to || "brandonrdz1999@gmail.com";
   try {
-    await sgMail.send({
-      from: "Sistema UDAT <reportes@udat.com.mx>",
+    await mailTransporter.sendMail({
+      from: `"Sistema UDAT" <${GMAIL_USER}>`,
       to: dest,
-      subject: 'Test SendGrid — Sistema UDAT',
-      html: '<p>Correo de prueba del sistema UDAT via SendGrid.</p>',
+      subject: 'Test Gmail — Sistema UDAT',
+      html: '<p>Correo de prueba del sistema UDAT via Gmail SMTP.</p>',
     });
     res.json({ ok: true, message: `Email enviado a ${dest}` });
   } catch (e) {
