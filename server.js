@@ -643,29 +643,37 @@ sql
   .catch((err) => console.log("❌ Error SQL:", err));
 
 // ─── Email helpers ────────────────────────────────────────────────────────────
-const mailer = SMTP_USER && SMTP_PASS
-  ? nodemailer.createTransport({
-      host: "smtp.office365.com",
-      port: 587,
-      secure: false,
-      requireTLS: true,
-      auth: { user: SMTP_USER, pass: SMTP_PASS },
-      tls: { rejectUnauthorized: false },
-      family: 4,
-      connectionTimeout: 15000,
-      socketTimeout: 15000,
-      greetingTimeout: 15000,
-    })
-  : null;
+let mailer = null;
 
-if (mailer) {
+(async () => {
+  if (!SMTP_USER || !SMTP_PASS) {
+    console.log("⚠️ SMTP no configurado (SMTP_USER / SMTP_PASS ausentes)");
+    return;
+  }
+  let smtpHost = "smtp.office365.com";
+  try {
+    const addrs = await require("dns").promises.resolve4("smtp.office365.com");
+    smtpHost = addrs[0];
+    console.log(`📧 SMTP DNS → IPv4 ${smtpHost}`);
+  } catch (e) {
+    console.log(`📧 DNS resolve4 falló, usando hostname: ${e.message}`);
+  }
+  mailer = nodemailer.createTransport({
+    host: smtpHost,
+    port: 587,
+    secure: false,
+    requireTLS: true,
+    auth: { user: SMTP_USER, pass: SMTP_PASS },
+    tls: { rejectUnauthorized: false, servername: "smtp.office365.com" },
+    connectionTimeout: 15000,
+    socketTimeout: 15000,
+    greetingTimeout: 15000,
+  });
   mailer.verify((err) => {
     if (err) console.log("⚠️ SMTP no conectó:", err.message);
     else     console.log("✅ SMTP Office365 listo — correos habilitados");
   });
-} else {
-  console.log("⚠️ SMTP no configurado (SMTP_USER / SMTP_PASS ausentes)");
-}
+})();
 
 async function sendMail(to, subject, html) {
   if (!mailer || !to || !to.length) {
