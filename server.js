@@ -651,6 +651,9 @@ const mailer = SMTP_USER && SMTP_PASS
       auth: { user: SMTP_USER, pass: SMTP_PASS },
       tls: { rejectUnauthorized: false },
       family: 4,
+      connectionTimeout: 15000,
+      socketTimeout: 15000,
+      greetingTimeout: 15000,
     })
   : null;
 
