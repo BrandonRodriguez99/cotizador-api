@@ -643,66 +643,27 @@ sql
   .catch((err) => console.log("❌ Error SQL:", err));
 
 // ─── Email helpers ────────────────────────────────────────────────────────────
-const { Resend } = require("resend");
-const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
-const resendClient = RESEND_API_KEY ? new Resend(RESEND_API_KEY) : null;
-if (resendClient) console.log("✅ Resend configurado — correos habilitados");
-else console.log("⚠️ RESEND_API_KEY no configurado — correos deshabilitados");
-
-// SMTP fallback (Office365 puerto 465)
-let mailer = null;
-(async () => {
-  if (!SMTP_USER || !SMTP_PASS || resendClient) return;
-  let smtpHost = "smtp.office365.com";
-  try {
-    const addrs = await require("dns").promises.resolve4("smtp.office365.com");
-    smtpHost = addrs[0];
-  } catch (_) {}
-  mailer = require("nodemailer").createTransport({
-    host: smtpHost,
-    port: 465,
-    secure: true,
-    auth: { user: SMTP_USER, pass: SMTP_PASS },
-    tls: { rejectUnauthorized: false, servername: "smtp.office365.com" },
-    connectionTimeout: 15000,
-    socketTimeout: 15000,
-    greetingTimeout: 15000,
-  });
-  mailer.verify((err) => {
-    if (err) console.log("⚠️ SMTP 465 no conectó:", err.message);
-    else     console.log("✅ SMTP Office365 puerto 465 listo");
-  });
-})();
+const sgMail = require("@sendgrid/mail");
+const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY || "";
+if (SENDGRID_API_KEY) {
+  sgMail.setApiKey(SENDGRID_API_KEY);
+  console.log("✅ SendGrid configurado — correos habilitados");
+} else {
+  console.log("⚠️ SENDGRID_API_KEY no configurado — correos deshabilitados");
+}
 
 async function sendMail(to, subject, html) {
   if (!to || !to.length) return;
-  // Prioridad 1: Resend (HTTP, sin problemas de puerto)
-  if (resendClient) {
-    try {
-      const { data, error } = await resendClient.emails.send({
-        from: "Sistema UDAT <reportes@udat.com.mx>",
-        to,
-        subject,
-        html,
-      });
-      if (error) throw new Error(JSON.stringify(error));
-      console.log(`✅ Email enviado (Resend) a: ${to.join(",")} — id: ${data?.id}`);
-    } catch (e) {
-      console.log("⚠️ Error Resend:", e.message);
-    }
+  if (!SENDGRID_API_KEY) {
+    console.log(`⚠️ Email no enviado (SENDGRID_API_KEY no configurado): ${subject}`);
     return;
   }
-  // Prioridad 2: SMTP Office365 puerto 465
-  if (mailer) {
-    try {
-      await mailer.sendMail({ from: `"Sistema UDAT" <${SMTP_USER}>`, to: to.join(","), subject, html });
-      console.log(`✅ Email enviado (SMTP 465) a: ${to.join(",")}`);
-    } catch (e) {
-      console.log("⚠️ Error SMTP 465:", e.message);
-    }
-    return;
+  try {
+    await sgMail.send({ from: "Sistema UDAT <reportes@udat.com.mx>", to, subject, html });
+    console.log(`✅ Email enviado (SendGrid) a: ${to.join(",")}`);
+  } catch (e) {
+    console.log("⚠️ Error SendGrid:", e.response?.body?.errors?.[0]?.message || e.message);
   }
-  console.log(`⚠️ Email no enviado — sin configuración disponible: ${subject}`);
 }
 
 async function getEmailsDeRol(rol) {
@@ -4145,19 +4106,18 @@ app.post('/api/public/solicitud-vehiculo', async (req, res) => {
 
 // ── Diagnóstico email ─────────────────────────────────────────────────────────
 app.get('/api/debug/test-email', async (req, res) => {
-  if (!resendClient) return res.json({ ok: false, error: 'RESEND_API_KEY no configurado en Render' });
+  if (!SENDGRID_API_KEY) return res.json({ ok: false, error: 'SENDGRID_API_KEY no configurado en Render' });
+  const dest = req.query.to || "brandonrdz1999@gmail.com";
   try {
-    const dest = req.query.to || SMTP_USER || "brandonrdz1999@gmail.com";
-    const { data, error } = await resendClient.emails.send({
+    await sgMail.send({
       from: "Sistema UDAT <reportes@udat.com.mx>",
-      to: [dest],
-      subject: 'Test Resend — Sistema UDAT',
-      html: '<p>Este es un correo de prueba del sistema UDAT via Resend.</p>',
+      to: dest,
+      subject: 'Test SendGrid — Sistema UDAT',
+      html: '<p>Correo de prueba del sistema UDAT via SendGrid.</p>',
     });
-    if (error) return res.json({ ok: false, error });
-    res.json({ ok: true, message: `Email enviado a ${dest}`, id: data?.id });
+    res.json({ ok: true, message: `Email enviado a ${dest}` });
   } catch (e) {
-    res.json({ ok: false, error: e.message });
+    res.json({ ok: false, error: e.response?.body?.errors?.[0]?.message || e.message });
   }
 });
 
