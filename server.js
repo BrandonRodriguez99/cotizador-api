@@ -1159,6 +1159,14 @@ function soloEncargadoVehiculos(req, res, next) {
   next();
 }
 
+function soloAdminOJefeSeg(req, res, next) {
+  const rolesPermitidos = ['admin', 'jefe_seguridad'];
+  if (!req.usuario || !rolesPermitidos.includes(req.usuario.rol)) {
+    return res.status(403).json({ error: 'Acceso solo para administradores o jefe de seguridad' });
+  }
+  next();
+}
+
 // TEST
 app.get("/", (req, res) => res.send("API funcionando"));
 
@@ -3457,7 +3465,7 @@ app.get('/api/seguridad/vehiculos', autenticar, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.post('/api/seguridad/vehiculos', autenticar, soloAdmin, async (req, res) => {
+app.post('/api/seguridad/vehiculos', autenticar, soloAdminOJefeSeg, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
     const d = req.body;
@@ -3473,7 +3481,7 @@ app.post('/api/seguridad/vehiculos', autenticar, soloAdmin, async (req, res) => 
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.put('/api/seguridad/vehiculos/:id', autenticar, soloAdmin, async (req, res) => {
+app.put('/api/seguridad/vehiculos/:id', autenticar, soloAdminOJefeSeg, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
     const d = req.body;
@@ -3506,7 +3514,7 @@ app.get('/api/seguridad/extintores', autenticar, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.post('/api/seguridad/extintores', autenticar, soloAdmin, async (req, res) => {
+app.post('/api/seguridad/extintores', autenticar, soloAdminOJefeSeg, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
     const d = req.body;
@@ -3520,7 +3528,7 @@ app.post('/api/seguridad/extintores', autenticar, soloAdmin, async (req, res) =>
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.put('/api/seguridad/extintores/:id', autenticar, soloAdmin, async (req, res) => {
+app.put('/api/seguridad/extintores/:id', autenticar, soloAdminOJefeSeg, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
     const d = req.body;
@@ -3551,7 +3559,7 @@ app.get('/api/seguridad/puntos-revision', autenticar, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.post('/api/seguridad/puntos-revision', autenticar, soloAdmin, async (req, res) => {
+app.post('/api/seguridad/puntos-revision', autenticar, soloAdminOJefeSeg, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
     const { Nombre, Descripcion } = req.body;
@@ -3563,7 +3571,7 @@ app.post('/api/seguridad/puntos-revision', autenticar, soloAdmin, async (req, re
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.put('/api/seguridad/puntos-revision/:id', autenticar, soloAdmin, async (req, res) => {
+app.put('/api/seguridad/puntos-revision/:id', autenticar, soloAdminOJefeSeg, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
     const { Nombre, Descripcion, Activo } = req.body;
@@ -3577,7 +3585,7 @@ app.put('/api/seguridad/puntos-revision/:id', autenticar, soloAdmin, async (req,
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.post('/api/seguridad/puntos-revision/:id/areas', autenticar, soloAdmin, async (req, res) => {
+app.post('/api/seguridad/puntos-revision/:id/areas', autenticar, soloAdminOJefeSeg, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
     const { Nombre } = req.body;
@@ -3589,7 +3597,7 @@ app.post('/api/seguridad/puntos-revision/:id/areas', autenticar, soloAdmin, asyn
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.put('/api/seguridad/areas/:id', autenticar, soloAdmin, async (req, res) => {
+app.put('/api/seguridad/areas/:id', autenticar, soloAdminOJefeSeg, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
     const { Nombre, Activo } = req.body;
@@ -4014,6 +4022,58 @@ app.put('/api/seguridad/ordenes-vehiculo/:id/llegada', autenticar, async (req, r
       .input('Observaciones',        sql.NVarChar(4000),Observaciones || null)
       .input('RegistradoPorLlegada', sql.NVarChar(200), req.usuario?.nombre || '')
       .query(`UPDATE OrdenesVehiculo SET Estado='completada',HoraLlegada=@HoraLlegada,KmFinal=@KmFinal,Observaciones=@Observaciones,RegistradoPorLlegada=@RegistradoPorLlegada WHERE OrdenVehiculoId=@id`);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── DELETE endpoints Seguridad ────────────────────────────────────────────────
+
+app.delete('/api/seguridad/vehiculos/:id', autenticar, soloAdminOJefeSeg, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    await pool.request()
+      .input('id', sql.Int, Number(req.params.id))
+      .query('UPDATE Vehiculos SET Activo=0 WHERE VehiculoId=@id');
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/seguridad/extintores/:id', autenticar, soloAdminOJefeSeg, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    await pool.request()
+      .input('id', sql.Int, Number(req.params.id))
+      .query('UPDATE Extintores SET Activo=0 WHERE ExtintorId=@id');
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/seguridad/visitas/:id', autenticar, soloAdminOJefeSeg, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    await pool.request()
+      .input('id', sql.Int, Number(req.params.id))
+      .query('DELETE FROM Visitas WHERE VisitaId=@id');
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/seguridad/rondines/:id', autenticar, soloAdminOJefeSeg, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const id = Number(req.params.id);
+    await pool.request().input('id', sql.Int, id).query('DELETE FROM RondinesRegistros WHERE RondinId=@id');
+    await pool.request().input('id', sql.Int, id).query('DELETE FROM Rondines WHERE RondinId=@id');
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/seguridad/ordenes-vehiculo/:id', autenticar, soloAdminOJefeSeg, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    await pool.request()
+      .input('id', sql.Int, Number(req.params.id))
+      .query("DELETE FROM OrdenesVehiculo WHERE OrdenVehiculoId=@id AND Estado IN ('pendiente','rechazada')");
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
