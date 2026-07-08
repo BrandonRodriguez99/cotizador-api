@@ -649,6 +649,9 @@ const mailTransporter = nodemailer.createTransport({
   secure: false,
   auth: { user: SMTP_USER, pass: SMTP_PASS },
   tls: { rejectUnauthorized: false },
+  connectionTimeout: 10000,
+  greetingTimeout: 10000,
+  socketTimeout: 15000,
 });
 
 if (SMTP_USER && SMTP_PASS) {
