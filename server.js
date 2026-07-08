@@ -643,40 +643,40 @@ sql
   .catch((err) => console.log("❌ Error SQL:", err));
 
 // ─── Email helpers ────────────────────────────────────────────────────────────
+const GMAIL_USER = process.env.GMAIL_USER || "";
+const GMAIL_APP_PASS = process.env.GMAIL_APP_PASS || "";
+
 const mailTransporter = nodemailer.createTransport({
-  host: "smtp.office365.com",
-  port: 587,
-  secure: false,
-  auth: { user: SMTP_USER, pass: SMTP_PASS },
-  tls: { rejectUnauthorized: false },
+  service: "gmail",
+  auth: { user: GMAIL_USER, pass: GMAIL_APP_PASS },
   connectionTimeout: 10000,
   greetingTimeout: 10000,
   socketTimeout: 15000,
 });
 
-if (SMTP_USER && SMTP_PASS) {
-  console.log("✅ Office365 SMTP configurado — correos habilitados");
+if (GMAIL_USER && GMAIL_APP_PASS) {
+  console.log("✅ Gmail SMTP configurado — correos habilitados");
 } else {
-  console.log("⚠️ SMTP_USER/SMTP_PASS no configurado — correos deshabilitados");
+  console.log("⚠️ GMAIL_USER/GMAIL_APP_PASS no configurado — correos deshabilitados");
 }
 
 async function sendMail(to, subject, html) {
   if (!to || !to.length) return;
-  if (!SMTP_USER || !SMTP_PASS) {
+  if (!GMAIL_USER || !GMAIL_APP_PASS) {
     console.log(`⚠️ Email no enviado: ${subject}`);
     return;
   }
   try {
     const toStr = Array.isArray(to) ? to.join(",") : to;
     await mailTransporter.sendMail({
-      from: `"Sistema UDAT" <${SMTP_USER}>`,
+      from: `"Sistema UDAT" <${GMAIL_USER}>`,
       to: toStr,
       subject,
       html,
     });
-    console.log(`✅ Email enviado (Office365) a: ${toStr}`);
+    console.log(`✅ Email enviado (Gmail) a: ${toStr}`);
   } catch (e) {
-    console.log("⚠️ Error Office365 SMTP:", e.message);
+    console.log("⚠️ Error Gmail SMTP:", e.message);
   }
 }
 
@@ -4120,13 +4120,13 @@ app.post('/api/public/solicitud-vehiculo', async (req, res) => {
 
 // ── Diagnóstico email ─────────────────────────────────────────────────────────
 app.get('/api/debug/test-email', async (req, res) => {
-  if (!SMTP_USER || !SMTP_PASS) return res.json({ ok: false, error: 'SMTP_USER/SMTP_PASS no configurado' });
+  if (!GMAIL_USER || !GMAIL_APP_PASS) return res.json({ ok: false, error: 'GMAIL_USER/GMAIL_APP_PASS no configurado' });
   const dest = req.query.to || "brandon.rodriguez@udat.com.mx";
   try {
-    await mailTransporter.sendMail({ from: `"Sistema UDAT" <${SMTP_USER}>`, to: dest, subject: 'Test Office365 — Sistema UDAT', html: '<p>Correo de prueba via Office 365 SMTP.</p>' });
+    await mailTransporter.sendMail({ from: `"Sistema UDAT" <${GMAIL_USER}>`, to: dest, subject: 'Test Gmail — Sistema UDAT', html: '<p>Correo de prueba via Gmail SMTP.</p>' });
     res.json({ ok: true, message: `Email enviado a ${dest}` });
   } catch (e) {
-    res.json({ ok: false, error: e.response?.body?.errors?.[0]?.message || e.message });
+    res.json({ ok: false, error: e.message });
   }
 });
 
