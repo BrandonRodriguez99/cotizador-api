@@ -2088,10 +2088,35 @@ app.put("/api/cotizaciones/:id", autenticar, async (req, res) => {
 app.post("/api/cotizaciones/:id/enviar", async (req, res) => {
   try {
     if (!ensurePool(res)) return;
+    const id = Number(req.params.id);
     await pool.request()
-      .input("id", sql.Int, Number(req.params.id))
+      .input("id", sql.Int, id)
       .query("UPDATE Cotizaciones SET Estado = 'Enviada' WHERE CotizacionId = @id");
     res.json({ ok: true });
+
+    // Notificar al autorizador1
+    ;(async () => {
+      try {
+        const cotRes = await pool.request().input("id", sql.Int, id).query(`
+          SELECT c.Folio, c.TotalConGanancia, c.CreadoPor,
+            cl.Nombre AS Cliente, cu.Nombre AS Curso
+          FROM Cotizaciones c
+          LEFT JOIN Empresas cl ON c.ClienteId = cl.EmpresaId
+          LEFT JOIN Cursos cu ON c.CursoId = cu.CursoId
+          WHERE c.CotizacionId = @id
+        `);
+        const cot = cotRes.recordset[0];
+        if (!cot) return;
+        const emailsAut = await getEmailsDeRol("autorizador1");
+        console.log(`📧 Cotización ${cot.Folio} /enviar — autorizadores: ${emailsAut.join(',') || 'ninguno'}`);
+        if (emailsAut.length) {
+          await sendMail(emailsAut,
+            `Nueva cotización ${cot.Folio} requiere su aprobación`,
+            emailCotizacionPendiente(cot.Folio, cot.Cliente, cot.Curso, cot.TotalConGanancia, cot.CreadoPor));
+          console.log(`✅ Email /enviar enviado a: ${emailsAut.join(',')}`);
+        }
+      } catch (e) { console.log('❌ Error email /enviar cotización:', e.message); }
+    })();
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
