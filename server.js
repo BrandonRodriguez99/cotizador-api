@@ -3999,13 +3999,21 @@ app.put('/api/seguridad/ordenes-vehiculo/:id/salida', autenticar, async (req, re
   try {
     if (!ensurePool(res)) return;
     const id = Number(req.params.id);
-    const { KmInicial } = req.body;
+    const { KmInicial, FotoSalidaFrontal, FotoSalidaTrasero, FotoSalidaLateralIzq, FotoSalidaLateralDer } = req.body;
     await pool.request()
-      .input('id',                  sql.Int,           id)
-      .input('HoraSalidaReal',      sql.DateTime2,     new Date())
-      .input('KmInicial',           sql.Decimal(10,2), KmInicial ? Number(KmInicial) : null)
-      .input('RegistradoPorSalida', sql.NVarChar(200), req.usuario?.nombre || '')
-      .query(`UPDATE OrdenesVehiculo SET Estado='en_curso',HoraSalidaReal=@HoraSalidaReal,KmInicial=@KmInicial,RegistradoPorSalida=@RegistradoPorSalida WHERE OrdenVehiculoId=@id`);
+      .input('id',                   sql.Int,           id)
+      .input('HoraSalidaReal',       sql.DateTime2,     new Date())
+      .input('KmInicial',            sql.Decimal(10,2), KmInicial ? Number(KmInicial) : null)
+      .input('RegistradoPorSalida',  sql.NVarChar(200), req.usuario?.nombre || '')
+      .input('FotoSalidaFrontal',    sql.NVarChar(500), FotoSalidaFrontal    || null)
+      .input('FotoSalidaTrasero',    sql.NVarChar(500), FotoSalidaTrasero    || null)
+      .input('FotoSalidaLateralIzq', sql.NVarChar(500), FotoSalidaLateralIzq || null)
+      .input('FotoSalidaLateralDer', sql.NVarChar(500), FotoSalidaLateralDer || null)
+      .query(`UPDATE OrdenesVehiculo SET
+        Estado='en_curso', HoraSalidaReal=@HoraSalidaReal, KmInicial=@KmInicial, RegistradoPorSalida=@RegistradoPorSalida,
+        FotoSalidaFrontal=@FotoSalidaFrontal, FotoSalidaTrasero=@FotoSalidaTrasero,
+        FotoSalidaLateralIzq=@FotoSalidaLateralIzq, FotoSalidaLateralDer=@FotoSalidaLateralDer
+        WHERE OrdenVehiculoId=@id`);
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -4014,14 +4022,22 @@ app.put('/api/seguridad/ordenes-vehiculo/:id/llegada', autenticar, async (req, r
   try {
     if (!ensurePool(res)) return;
     const id = Number(req.params.id);
-    const { KmFinal, Observaciones } = req.body;
+    const { KmFinal, Observaciones, FotoLlegadaFrontal, FotoLlegadaTrasero, FotoLlegadaLateralIzq, FotoLlegadaLateralDer } = req.body;
     await pool.request()
-      .input('id',                   sql.Int,           id)
-      .input('HoraLlegada',          sql.DateTime2,     new Date())
-      .input('KmFinal',              sql.Decimal(10,2), KmFinal ? Number(KmFinal) : null)
-      .input('Observaciones',        sql.NVarChar(4000),Observaciones || null)
-      .input('RegistradoPorLlegada', sql.NVarChar(200), req.usuario?.nombre || '')
-      .query(`UPDATE OrdenesVehiculo SET Estado='completada',HoraLlegada=@HoraLlegada,KmFinal=@KmFinal,Observaciones=@Observaciones,RegistradoPorLlegada=@RegistradoPorLlegada WHERE OrdenVehiculoId=@id`);
+      .input('id',                    sql.Int,           id)
+      .input('HoraLlegada',           sql.DateTime2,     new Date())
+      .input('KmFinal',               sql.Decimal(10,2), KmFinal ? Number(KmFinal) : null)
+      .input('Observaciones',         sql.NVarChar(4000),Observaciones || null)
+      .input('RegistradoPorLlegada',  sql.NVarChar(200), req.usuario?.nombre || '')
+      .input('FotoLlegadaFrontal',    sql.NVarChar(500), FotoLlegadaFrontal    || null)
+      .input('FotoLlegadaTrasero',    sql.NVarChar(500), FotoLlegadaTrasero    || null)
+      .input('FotoLlegadaLateralIzq', sql.NVarChar(500), FotoLlegadaLateralIzq || null)
+      .input('FotoLlegadaLateralDer', sql.NVarChar(500), FotoLlegadaLateralDer || null)
+      .query(`UPDATE OrdenesVehiculo SET
+        Estado='completada', HoraLlegada=@HoraLlegada, KmFinal=@KmFinal, Observaciones=@Observaciones, RegistradoPorLlegada=@RegistradoPorLlegada,
+        FotoLlegadaFrontal=@FotoLlegadaFrontal, FotoLlegadaTrasero=@FotoLlegadaTrasero,
+        FotoLlegadaLateralIzq=@FotoLlegadaLateralIzq, FotoLlegadaLateralDer=@FotoLlegadaLateralDer
+        WHERE OrdenVehiculoId=@id`);
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -4108,7 +4124,22 @@ app.get('/api/seguridad/dashboard', autenticar, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ─── UPLOAD FOTO (Cloudinary) ─────────────────────────────────────────────────
+// ─── UPLOAD FOTOS (Cloudinary) ───────────────────────────────────────────────
+app.post('/api/upload/foto-vehiculo', autenticar, async (req, res) => {
+  try {
+    const { base64 } = req.body;
+    if (!base64) return res.status(400).json({ error: 'No se recibió imagen' });
+    const result = await cloudinary.uploader.upload(base64, {
+      folder: 'vehiculos',
+      resource_type: 'image',
+    });
+    res.json({ url: result.secure_url });
+  } catch (err) {
+    console.log('❌ Error Cloudinary vehiculo:', err.message);
+    res.status(500).json({ error: err.message || 'No se pudo subir la imagen' });
+  }
+});
+
 app.post('/api/upload/foto-rondin', autenticar, async (req, res) => {
   try {
     const { base64 } = req.body;
