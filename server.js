@@ -15,9 +15,10 @@ const SMTP_PASS = process.env.SMTP_PASS || "";
 const APP_URL   = process.env.APP_URL   || "https://cotizador-web-coral.vercel.app";
 
 cloudinary.config({
-  cloud_name:  process.env.CLOUDINARY_CLOUD_NAME  || "kcj1hrdy",
-  api_key:     process.env.CLOUDINARY_API_KEY     || "141477992514236",
-  api_secret:  process.env.CLOUDINARY_API_SECRET  || "EzH_SCIZtJm9t902Wopf8lwwjOc",
+  cloud_name:          process.env.CLOUDINARY_CLOUD_NAME  || "kcj1hrdy",
+  api_key:             process.env.CLOUDINARY_API_KEY     || "141477992514236",
+  api_secret:          process.env.CLOUDINARY_API_SECRET  || "EzH_SCIZtJm9t902Wopf8lwwjOc",
+  signature_algorithm: 'sha256',
 });
 
 const app = express();
