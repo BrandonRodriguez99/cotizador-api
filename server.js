@@ -1920,31 +1920,38 @@ app.post("/api/cotizaciones", async (req, res) => {
       res.status(201).json({ cotizacionId, id: cotizacionId });
 
       // Notificar al autorizador1 y al creador (sin bloquear la respuesta)
-      Promise.all([
-        getEmailsDeRol("autorizador1"),
-        getEmailDeUsuario(d.creadoPor),
-        d.clienteId
-          ? pool.request().input('_cid', sql.Int, Number(d.clienteId))
-              .query('SELECT Nombre FROM Empresas WHERE EmpresaId=@_cid')
-              .then(r => r.recordset[0]?.Nombre || null).catch(() => null)
-          : Promise.resolve(null),
-        d.cursoId
-          ? pool.request().input('_cuid', sql.Int, Number(d.cursoId))
-              .query('SELECT Nombre FROM Cursos WHERE CursoId=@_cuid')
-              .then(r => r.recordset[0]?.Nombre || null).catch(() => null)
-          : Promise.resolve(null),
-      ]).then(([emailsAut, emailsCreador, clienteNombre, cursoNombre]) => {
-        if (emailsAut.length) {
-          console.log(`📧 Cotización ${d.folio} → autorizador1`);
-          sendMail(emailsAut, `Nueva cotización ${d.folio} requiere su aprobación`,
-            emailCotizacionPendiente(d.folio, clienteNombre, cursoNombre, d.totalConGanancia, d.creadoPor));
-        }
-        if (emailsCreador.length) {
-          console.log(`📧 Cotización ${d.folio} → creador (${d.creadoPor})`);
-          sendMail(emailsCreador, `Tu cotización ${d.folio} fue registrada y está pendiente de aprobación`,
-            emailCotizacionConfirmacion(d.folio, d.totalConGanancia, d.creadoPor));
-        }
-      }).catch(() => {});
+      ;(async () => {
+        try {
+          const [emailsAut, emailsCreador] = await Promise.all([
+            getEmailsDeRol("autorizador1"),
+            getEmailDeUsuario(d.creadoPor),
+          ]);
+          let clienteNombre = null, cursoNombre = null;
+          try {
+            if (d.clienteId) {
+              const r = await pool.request().input('_cid', sql.Int, Number(d.clienteId))
+                .query('SELECT Nombre FROM Empresas WHERE EmpresaId=@_cid');
+              clienteNombre = r.recordset[0]?.Nombre || null;
+            }
+            if (d.cursoId) {
+              const r = await pool.request().input('_cuid', sql.Int, Number(d.cursoId))
+                .query('SELECT Nombre FROM Cursos WHERE CursoId=@_cuid');
+              cursoNombre = r.recordset[0]?.Nombre || null;
+            }
+          } catch (e) { console.log('⚠️ Error obteniendo nombres para email cotización:', e.message); }
+
+          console.log(`📧 Cotización ${d.folio} — autorizadores encontrados: ${emailsAut.join(',') || 'ninguno'}`);
+          if (emailsAut.length) {
+            await sendMail(emailsAut, `Nueva cotización ${d.folio} requiere su aprobación`,
+              emailCotizacionPendiente(d.folio, clienteNombre, cursoNombre, d.totalConGanancia, d.creadoPor));
+            console.log(`✅ Email cotización enviado a autorizador1: ${emailsAut.join(',')}`);
+          }
+          if (emailsCreador.length) {
+            await sendMail(emailsCreador, `Tu cotización ${d.folio} fue registrada y está pendiente de aprobación`,
+              emailCotizacionConfirmacion(d.folio, d.totalConGanancia, d.creadoPor));
+          }
+        } catch (e) { console.log('❌ Error enviando email cotización:', e.message); }
+      })();
     } catch (err) {
       await transaction.rollback();
       throw err;
