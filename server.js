@@ -634,6 +634,25 @@ sql
           IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.RondinesRegistros') AND name='OrdenMantenimientoId')
             ALTER TABLE dbo.RondinesRegistros ADD OrdenMantenimientoId INT NULL;
         `);
+        // Columnas de fotos en OrdenesVehiculo (agregadas en v3)
+        await pool.request().query(`
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.OrdenesVehiculo') AND name='FotoSalidaFrontal')
+            ALTER TABLE dbo.OrdenesVehiculo ADD FotoSalidaFrontal NVARCHAR(500) NULL;
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.OrdenesVehiculo') AND name='FotoSalidaTrasero')
+            ALTER TABLE dbo.OrdenesVehiculo ADD FotoSalidaTrasero NVARCHAR(500) NULL;
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.OrdenesVehiculo') AND name='FotoSalidaLateralIzq')
+            ALTER TABLE dbo.OrdenesVehiculo ADD FotoSalidaLateralIzq NVARCHAR(500) NULL;
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.OrdenesVehiculo') AND name='FotoSalidaLateralDer')
+            ALTER TABLE dbo.OrdenesVehiculo ADD FotoSalidaLateralDer NVARCHAR(500) NULL;
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.OrdenesVehiculo') AND name='FotoLlegadaFrontal')
+            ALTER TABLE dbo.OrdenesVehiculo ADD FotoLlegadaFrontal NVARCHAR(500) NULL;
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.OrdenesVehiculo') AND name='FotoLlegadaTrasero')
+            ALTER TABLE dbo.OrdenesVehiculo ADD FotoLlegadaTrasero NVARCHAR(500) NULL;
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.OrdenesVehiculo') AND name='FotoLlegadaLateralIzq')
+            ALTER TABLE dbo.OrdenesVehiculo ADD FotoLlegadaLateralIzq NVARCHAR(500) NULL;
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.OrdenesVehiculo') AND name='FotoLlegadaLateralDer')
+            ALTER TABLE dbo.OrdenesVehiculo ADD FotoLlegadaLateralDer NVARCHAR(500) NULL;
+        `);
         console.log("✅ Tablas de seguridad aseguradas");
 
       } catch (e) {
