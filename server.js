@@ -2394,18 +2394,10 @@ app.post("/api/ordenescompra/:id/aprobar", autenticar, async (req, res) => {
               emailPasoAprobado(order.Folio, order.Proveedor, order.Total, 1));
         }).catch(() => {});
       } else if (paso === 2) {
-        Promise.all([
-          getEmailDeUsuario(order.Creador),
-          getEmailsPorRoles(["empleado", "jefe_mantenimiento"]),
-        ]).then(([emailsCreador, emailsEmpleado]) => {
+        getEmailDeUsuario(order.Creador).then((emailsCreador) => {
           if (emailsCreador.length) {
             console.log(`📧 OC ${order.Folio} completamente aprobada → creador (${order.Creador})`);
             sendMail(emailsCreador, `Tu orden de compra ${order.Folio} fue aprobada`,
-              emailOCResultado(order.Folio, order.Proveedor, order.Total, true, aprobador, null));
-          }
-          if (emailsEmpleado.length) {
-            console.log(`📧 OC ${order.Folio} aprobada → empleados`);
-            sendMail(emailsEmpleado, `Orden de Compra ${order.Folio} fue aprobada`,
               emailOCResultado(order.Folio, order.Proveedor, order.Total, true, aprobador, null));
           }
         }).catch(() => {});
