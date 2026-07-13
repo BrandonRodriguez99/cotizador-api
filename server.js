@@ -225,6 +225,10 @@ sql
           IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.OrdenesCompra') AND name='Destino')
             ALTER TABLE dbo.OrdenesCompra ADD Destino NVARCHAR(100) NULL;
 
+          -- Columna ConIva en OrdenesCompra
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.OrdenesCompra') AND name='ConIva')
+            ALTER TABLE dbo.OrdenesCompra ADD ConIva BIT NOT NULL CONSTRAINT DF_OC_ConIva DEFAULT 1;
+
           -- Folio debe ser nullable para el patrón insert→getID→updateFolio
           IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.OrdenesCompra') AND name='Folio' AND is_nullable=0)
             ALTER TABLE dbo.OrdenesCompra ALTER COLUMN Folio NVARCHAR(50) NULL;
@@ -1043,6 +1047,7 @@ const tableSchemas = {
     proveedorid: "ProveedorId", fecha: "Fecha", tipo: "Tipo",
     destino: "Destino",
     observaciones: "Observaciones", subtotal: "Subtotal", iva: "Iva", total: "Total",
+    coniva: "ConIva",
     creador: "Creador", rechazado: "Rechazado", rechazadopor: "RechazadoPor",
     fecharechazo: "FechaRechazo", motivorechazo: "MotivoRechazo",
     modificadopor: "ModificadoPor", fechamodificacion: "FechaModificacion",
@@ -2626,7 +2631,7 @@ app.get("/api/ordenescompra/:id/pdf", async (req, res) => {
     const TOT_LBL = CW - 100, TOT_VAL = 100;
     [
       { lbl: "SUBTOTAL", val: fmtMXN(order.Subtotal), bg: "#f9fafb", fg: "#111827", bold: false },
-      { lbl: "IVA 16%",  val: fmtMXN(order.Iva),      bg: "#f9fafb", fg: "#111827", bold: false },
+      { lbl: order.ConIva !== false ? "IVA 16%" : "Sin IVA", val: order.ConIva !== false ? fmtMXN(order.Iva) : "—", bg: "#f9fafb", fg: order.ConIva !== false ? "#111827" : "#9ca3af", bold: false },
       { lbl: "TOTAL",    val: fmtMXN(order.Total),     bg: "#1e3a8a", fg: "#ffffff", bold: true  },
     ].forEach(({ lbl, val, bg, fg, bold }) => {
       pdfCell(doc, ML, y, TOT_LBL, 20, { fill: bg, text: lbl, size: 9, bold, align: "right", color: fg });
