@@ -659,6 +659,43 @@ sql
         `);
         console.log("✅ Tablas de seguridad aseguradas");
 
+        // ── Tablas de Consumos de Limpieza y recepción de OC ─────────────────
+        await pool.request().query(`
+          IF OBJECT_ID('dbo.AreasConsumo','U') IS NULL
+          BEGIN
+            CREATE TABLE dbo.AreasConsumo (
+              AreaConsumoId INT IDENTITY(1,1) PRIMARY KEY,
+              Nombre        NVARCHAR(200) NOT NULL,
+              Activo        BIT NOT NULL DEFAULT 1,
+              FechaCreacion DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+            );
+          END
+
+          IF OBJECT_ID('dbo.ConsumosLimpieza','U') IS NULL
+          BEGIN
+            CREATE TABLE dbo.ConsumosLimpieza (
+              ConsumoId     INT IDENTITY(1,1) PRIMARY KEY,
+              ProductoId    INT NOT NULL,
+              AreaConsumoId INT NULL,
+              Cantidad      DECIMAL(10,2) NOT NULL,
+              Usuario       NVARCHAR(150) NOT NULL,
+              Observaciones NVARCHAR(500) NULL,
+              Fecha         DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+              FOREIGN KEY (ProductoId) REFERENCES dbo.Inventario(ProductoId)
+            );
+          END
+
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.OrdenesCompra') AND name='Recepcionada')
+            ALTER TABLE dbo.OrdenesCompra ADD Recepcionada BIT NOT NULL DEFAULT 0;
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.OrdenesCompra') AND name='FechaRecepcion')
+            ALTER TABLE dbo.OrdenesCompra ADD FechaRecepcion DATETIME2 NULL;
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.OrdenesCompra') AND name='RecibidoPor')
+            ALTER TABLE dbo.OrdenesCompra ADD RecibidoPor NVARCHAR(150) NULL;
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.OrdenesCompraLineas') AND name='CantidadRecibida')
+            ALTER TABLE dbo.OrdenesCompraLineas ADD CantidadRecibida DECIMAL(10,2) NULL;
+        `);
+        console.log("✅ Tablas de consumos y recepción OC aseguradas");
+
       } catch (e) {
         console.log("❌ Error asegurando tablas:", e);
       }
@@ -1112,32 +1149,7 @@ const insertOrderWithDetails = async (data) => {
       .query("UPDATE OrdenesCompra SET Folio = @folio WHERE OrdenCompraId = @id");
     for (const item of lineItems) {
       await insertCatalogItemInTransaction(transaction, "OrdenesCompraLineas", normalizeRecord({ ...item, OrdenCompraId: orderId }, "OrdenesCompraLineas"));
-
-      // Si la partida tiene ProductoId, incrementar stock (ingreso por compra)
-      const productoId = item.ProductoId || item.productoid || null;
-      const cantidadCompra = Number(item.Cantidad || item.cantidad || 0);
-      if (productoId && cantidadCompra > 0) {
-        const prodRes = await new sql.Request(transaction)
-          .input('pid', sql.Int, Number(productoId))
-          .query('SELECT CantidadReal FROM Inventario WHERE ProductoId=@pid');
-        if (prodRes.recordset.length) {
-          const cantAnterior = Number(prodRes.recordset[0].CantidadReal);
-          const cantNueva    = cantAnterior + cantidadCompra;
-          await new sql.Request(transaction)
-            .input('pid',  sql.Int,           Number(productoId))
-            .input('cant', sql.Decimal(10,2),  cantNueva)
-            .query('UPDATE Inventario SET CantidadReal=@cant WHERE ProductoId=@pid');
-          await new sql.Request(transaction)
-            .input('pid',  sql.Int,           Number(productoId))
-            .input('cant', sql.Decimal(10,2),  cantidadCompra)
-            .input('ant',  sql.Decimal(10,2),  cantAnterior)
-            .input('ocId', sql.Int,            orderId)
-            .input('ref',  sql.NVarChar(300),  folio)
-            .query(`INSERT INTO InventarioMovimientos
-                      (ProductoId,TipoMovimiento,Cantidad,CantidadAnterior,OrdenCompraId,Referencia)
-                    VALUES(@pid,'ingreso',@cant,@ant,@ocId,@ref)`);
-        }
-      }
+      // Stock se actualiza al confirmar recepción (POST /api/ordenescompra/:id/recepcion)
     }
     for (const approval of approvals) {
       await insertCatalogItemInTransaction(transaction, "OrdenesCompraAprobaciones", normalizeRecord({ ...approval, OrdenCompraId: orderId }, "OrdenesCompraAprobaciones"));
@@ -2456,6 +2468,178 @@ app.post("/api/ordenescompra/:id/rechazar", autenticar, async (req, res) => {
   } catch (err) {
     console.log("❌ ERROR RECHAZAR ORDEN:", err);
     res.status(500).json({ error: err.message || "Error al rechazar" });
+  }
+});
+
+// ─── RECEPCIÓN DE ORDEN DE COMPRA ────────────────────────────────────────────
+app.post("/api/ordenescompra/:id/recepcion", autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const orderId = Number(req.params.id);
+    const { lineas, recibidoPor } = req.body; // lineas: [{lineaId, cantidadRecibida, productoId}]
+    if (!Array.isArray(lineas) || !lineas.length)
+      return res.status(400).json({ error: "Se requiere el arreglo de lineas" });
+
+    const transaction = new sql.Transaction(pool);
+    await transaction.begin();
+    try {
+      for (const l of lineas) {
+        const cant = Number(l.cantidadRecibida || 0);
+        await new sql.Request(transaction)
+          .input("cant", sql.Decimal(10,2), cant)
+          .input("lid",  sql.Int, Number(l.lineaId))
+          .query("UPDATE OrdenesCompraLineas SET CantidadRecibida=@cant WHERE OrdenCompraLineaId=@lid");
+
+        if (l.productoId && cant > 0) {
+          const prodRes = await new sql.Request(transaction)
+            .input("pid", sql.Int, Number(l.productoId))
+            .query("SELECT CantidadReal FROM Inventario WHERE ProductoId=@pid");
+          if (prodRes.recordset.length) {
+            const anterior = Number(prodRes.recordset[0].CantidadReal);
+            const nueva    = anterior + cant;
+            await new sql.Request(transaction)
+              .input("pid",  sql.Int,          Number(l.productoId))
+              .input("cant", sql.Decimal(10,2), nueva)
+              .query("UPDATE Inventario SET CantidadReal=@cant WHERE ProductoId=@pid");
+            await new sql.Request(transaction)
+              .input("pid",  sql.Int,          Number(l.productoId))
+              .input("cant", sql.Decimal(10,2), cant)
+              .input("ant",  sql.Decimal(10,2), anterior)
+              .input("ocId", sql.Int,           orderId)
+              .input("usr",  sql.NVarChar(150), recibidoPor || "")
+              .query(`INSERT INTO InventarioMovimientos
+                        (ProductoId,TipoMovimiento,Cantidad,CantidadAnterior,OrdenCompraId,Usuario)
+                      VALUES(@pid,'ingreso',@cant,@ant,@ocId,@usr)`);
+          }
+        }
+      }
+      await new sql.Request(transaction)
+        .input("id",  sql.Int,          orderId)
+        .input("por", sql.NVarChar(150), recibidoPor || "")
+        .query("UPDATE OrdenesCompra SET Recepcionada=1, FechaRecepcion=SYSUTCDATETIME(), RecibidoPor=@por WHERE OrdenCompraId=@id");
+      await transaction.commit();
+      res.json({ ok: true });
+    } catch (err) {
+      await transaction.rollback();
+      throw err;
+    }
+  } catch (err) {
+    console.log("❌ ERROR RECEPCIÓN OC:", err);
+    res.status(500).json({ error: err.message || "Error al registrar recepción" });
+  }
+});
+
+// ─── ÁREAS DE CONSUMO ─────────────────────────────────────────────────────────
+app.get("/api/areas-consumo", autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const r = await pool.request().query("SELECT * FROM AreasConsumo WHERE Activo=1 ORDER BY Nombre");
+    res.json(r.recordset);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post("/api/areas-consumo", autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const { Nombre } = req.body;
+    if (!Nombre?.trim()) return res.status(400).json({ error: "Nombre requerido" });
+    const r = await pool.request()
+      .input("n", sql.NVarChar(200), Nombre.trim())
+      .query("INSERT INTO AreasConsumo (Nombre) OUTPUT INSERTED.AreaConsumoId VALUES (@n)");
+    res.json({ AreaConsumoId: r.recordset[0].AreaConsumoId });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put("/api/areas-consumo/:id", autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const { Nombre } = req.body;
+    await pool.request()
+      .input("id", sql.Int, Number(req.params.id))
+      .input("n",  sql.NVarChar(200), Nombre?.trim() || "")
+      .query("UPDATE AreasConsumo SET Nombre=@n WHERE AreaConsumoId=@id");
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete("/api/areas-consumo/:id", autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    await pool.request()
+      .input("id", sql.Int, Number(req.params.id))
+      .query("UPDATE AreasConsumo SET Activo=0 WHERE AreaConsumoId=@id");
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ─── CONSUMOS DE LIMPIEZA ────────────────────────────────────────────────────
+app.get("/api/consumos", autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const soloMios = !['admin', 'jefe_mantenimiento'].includes(req.usuario.rol);
+    const req2 = pool.request();
+    if (soloMios) req2.input("usr", sql.NVarChar(150), req.usuario.nombre);
+    const r = await req2.query(`
+      SELECT c.ConsumoId, c.Cantidad, c.Usuario, c.Observaciones, c.Fecha,
+             i.NombreProducto, i.UnidadMedida,
+             a.Nombre AS Area
+      FROM ConsumosLimpieza c
+      INNER JOIN Inventario i ON c.ProductoId = i.ProductoId
+      LEFT JOIN  AreasConsumo a ON c.AreaConsumoId = a.AreaConsumoId
+      ${soloMios ? "WHERE c.Usuario = @usr" : ""}
+      ORDER BY c.Fecha DESC
+    `);
+    res.json(r.recordset);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post("/api/consumos", autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const { productoId, areaConsumoId, cantidad, observaciones } = req.body;
+    const cant = Number(cantidad);
+    if (!productoId || !cant || cant <= 0)
+      return res.status(400).json({ error: "productoId y cantidad requeridos" });
+
+    const transaction = new sql.Transaction(pool);
+    await transaction.begin();
+    try {
+      const prodRes = await new sql.Request(transaction)
+        .input("pid", sql.Int, Number(productoId))
+        .query("SELECT CantidadReal FROM Inventario WHERE ProductoId=@pid");
+      if (!prodRes.recordset.length) { await transaction.rollback(); return res.status(404).json({ error: "Producto no encontrado" }); }
+      const anterior = Number(prodRes.recordset[0].CantidadReal);
+      if (anterior < cant) { await transaction.rollback(); return res.status(400).json({ error: "Stock insuficiente" }); }
+      const nueva = anterior - cant;
+
+      await new sql.Request(transaction)
+        .input("pid",  sql.Int,          Number(productoId))
+        .input("cant", sql.Decimal(10,2), nueva)
+        .query("UPDATE Inventario SET CantidadReal=@cant WHERE ProductoId=@pid");
+
+      await new sql.Request(transaction)
+        .input("pid",  sql.Int,          Number(productoId))
+        .input("aid",  sql.Int,          areaConsumoId ? Number(areaConsumoId) : null)
+        .input("cant", sql.Decimal(10,2), cant)
+        .input("usr",  sql.NVarChar(150), req.usuario.nombre)
+        .input("obs",  sql.NVarChar(500), observaciones || null)
+        .query(`INSERT INTO ConsumosLimpieza (ProductoId, AreaConsumoId, Cantidad, Usuario, Observaciones)
+                VALUES (@pid, @aid, @cant, @usr, @obs)`);
+
+      await new sql.Request(transaction)
+        .input("pid",  sql.Int,          Number(productoId))
+        .input("cant", sql.Decimal(10,2), cant)
+        .input("ant",  sql.Decimal(10,2), anterior)
+        .input("usr",  sql.NVarChar(150), req.usuario.nombre)
+        .query(`INSERT INTO InventarioMovimientos (ProductoId,TipoMovimiento,Cantidad,CantidadAnterior,Usuario)
+                VALUES (@pid,'consumo',@cant,@ant,@usr)`);
+
+      await transaction.commit();
+      res.json({ ok: true, stockNuevo: nueva });
+    } catch (err) { await transaction.rollback(); throw err; }
+  } catch (err) {
+    console.log("❌ ERROR CONSUMO:", err);
+    res.status(500).json({ error: err.message || "Error al registrar consumo" });
   }
 });
 
