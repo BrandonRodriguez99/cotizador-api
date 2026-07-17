@@ -2471,6 +2471,51 @@ app.post("/api/ordenescompra/:id/rechazar", autenticar, async (req, res) => {
   }
 });
 
+// OCs aprobadas y pendientes de recepción (para mantenimiento)
+app.get("/api/ordenescompra/pendientes-recepcion", autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const rolesPermitidos = ['admin', 'jefe_mantenimiento', 'mantenimiento'];
+    if (!rolesPermitidos.includes(req.usuario.rol))
+      return res.status(403).json({ error: 'Sin permisos' });
+
+    const ocsRes = await pool.request().query(`
+      SELECT oc.OrdenCompraId, oc.Folio, oc.Fecha, oc.Total, oc.Tipo,
+             p.Nombre AS Proveedor
+      FROM OrdenesCompra oc
+      INNER JOIN Proveedores p ON oc.ProveedorId = p.ProveedorId
+      WHERE oc.Activo = 1
+        AND ISNULL(oc.Recepcionada, 0) = 0
+        AND ISNULL(oc.Rechazado, 0) = 0
+        AND (SELECT COUNT(*) FROM OrdenesCompraAprobaciones a
+             WHERE a.OrdenCompraId = oc.OrdenCompraId AND a.Aprobado = 0) = 0
+        AND (SELECT COUNT(*) FROM OrdenesCompraAprobaciones a
+             WHERE a.OrdenCompraId = oc.OrdenCompraId) > 0
+      ORDER BY oc.Fecha DESC
+    `);
+
+    const ocs = ocsRes.recordset;
+    if (!ocs.length) return res.json([]);
+
+    const ids = ocs.map(o => o.OrdenCompraId).join(',');
+    const lineasRes = await pool.request().query(`
+      SELECT l.OrdenCompraLineaId, l.OrdenCompraId, l.Descripcion, l.Cantidad,
+             l.ProductoId, i.NombreProducto, i.UnidadMedida
+      FROM OrdenesCompraLineas l
+      LEFT JOIN Inventario i ON l.ProductoId = i.ProductoId
+      WHERE l.OrdenCompraId IN (${ids})
+      ORDER BY l.OrdenCompraId, l.OrdenLinea, l.OrdenCompraLineaId
+    `);
+
+    const lineasMap = {};
+    for (const l of lineasRes.recordset) {
+      if (!lineasMap[l.OrdenCompraId]) lineasMap[l.OrdenCompraId] = [];
+      lineasMap[l.OrdenCompraId].push(l);
+    }
+    res.json(ocs.map(o => ({ ...o, Lineas: lineasMap[o.OrdenCompraId] || [] })));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ─── RECEPCIÓN DE ORDEN DE COMPRA ────────────────────────────────────────────
 app.post("/api/ordenescompra/:id/recepcion", autenticar, async (req, res) => {
   try {
