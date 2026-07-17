@@ -2244,8 +2244,7 @@ app.post("/api/ordenescompra", async (req, res) => {
     Promise.all([
       getEmailsDeRol("autorizador1"),
       getEmailDeUsuario(creador),
-      getEmailsPorRoles(["empleado", "jefe_mantenimiento"]),
-    ]).then(([emailsAut, emailsCreador, emailsEmpleado]) => {
+    ]).then(([emailsAut, emailsCreador]) => {
       if (emailsAut.length) {
         console.log(`📧 OC ${folio} → autorizador1`);
         sendMail(emailsAut, `Nueva orden ${folio} requiere su autorización`, emailOrdenCreada(folio, proveedor, total));
@@ -2254,10 +2253,6 @@ app.post("/api/ordenescompra", async (req, res) => {
         console.log(`📧 OC ${folio} → creador (${creador})`);
         sendMail(emailsCreador, `Tu orden de compra ${folio} fue registrada y está pendiente de aprobación`,
           emailOCConfirmacion(folio, proveedor, total));
-      }
-      if (emailsEmpleado.length) {
-        console.log(`📧 OC ${folio} → empleados`);
-        sendMail(emailsEmpleado, `Nueva Orden de Compra registrada — ${folio}`, emailOrdenCreada(folio, proveedor, total));
       }
     }).catch(() => {});
   } catch (err) { console.log("❌ ERROR CREAR ORDEN DE COMPRA:", err); res.status(500).json({ error: err.message || 'Error interno del servidor' }); }
@@ -2449,18 +2444,10 @@ app.post("/api/ordenescompra/:id/rechazar", autenticar, async (req, res) => {
         `);
         const order = orderRes.recordset[0];
         if (!order) return;
-        const [emailsCreador, emailsEmpleado] = await Promise.all([
-          getEmailDeUsuario(order.Creador),
-          getEmailsPorRoles(["empleado", "jefe_mantenimiento"]),
-        ]);
+        const emailsCreador = await getEmailDeUsuario(order.Creador);
         if (emailsCreador.length) {
           console.log(`📧 OC ${order.Folio} rechazada → creador (${order.Creador})`);
           sendMail(emailsCreador, `Tu orden de compra ${order.Folio} fue rechazada`,
-            emailOCResultado(order.Folio, order.Proveedor, order.Total, false, aprobador, motivo));
-        }
-        if (emailsEmpleado.length) {
-          console.log(`📧 OC ${order.Folio} rechazada → empleados`);
-          sendMail(emailsEmpleado, `Orden de Compra ${order.Folio} fue rechazada`,
             emailOCResultado(order.Folio, order.Proveedor, order.Total, false, aprobador, motivo));
         }
       } catch(e) { console.log('Email rechazo OC:', e.message); }
