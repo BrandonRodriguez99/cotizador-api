@@ -2258,6 +2258,84 @@ app.post("/api/ordenescompra", async (req, res) => {
   } catch (err) { console.log("❌ ERROR CREAR ORDEN DE COMPRA:", err); res.status(500).json({ error: err.message || 'Error interno del servidor' }); }
 });
 
+app.put("/api/ordenescompra/:id", autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    if (req.usuario.rol !== 'admin')
+      return res.status(403).json({ error: 'Solo admin puede editar órdenes de compra' });
+
+    const orderId = Number(req.params.id);
+    const { ProveedorId, UnidadNegocioId, Tipo, Destino, Observaciones, ConIva, Total, Subtotal, Iva, LineItems, Proveedor } = req.body;
+
+    const transaction = new sql.Transaction(pool);
+    await transaction.begin();
+    try {
+      await new sql.Request(transaction)
+        .input('id',    sql.Int,           orderId)
+        .input('prov',  sql.Int,           Number(ProveedorId))
+        .input('un',    sql.Int,           Number(UnidadNegocioId))
+        .input('tipo',  sql.NVarChar(50),  Tipo || 'compras')
+        .input('dest',  sql.NVarChar(200), Destino || null)
+        .input('obs',   sql.NVarChar(sql.MAX), Observaciones || null)
+        .input('iva',   sql.Bit,           ConIva ? 1 : 0)
+        .input('sub',   sql.Decimal(18,2), Number(Subtotal) || 0)
+        .input('ivaM',  sql.Decimal(18,2), Number(Iva) || 0)
+        .input('tot',   sql.Decimal(18,2), Number(Total) || 0)
+        .query(`UPDATE OrdenesCompra SET
+          ProveedorId=@prov, UnidadNegocioId=@un, Tipo=@tipo,
+          Destino=@dest, Observaciones=@obs, ConIva=@iva,
+          Subtotal=@sub, IVA=@ivaM, Total=@tot,
+          Rechazado=0, RechazadoPor=NULL, MotivoRechazo=NULL, FechaRechazo=NULL
+          WHERE OrdenCompraId=@id`);
+
+      await new sql.Request(transaction)
+        .input('id', sql.Int, orderId)
+        .query(`UPDATE OrdenesCompraAprobaciones
+                SET Aprobado=0, AprobadoPor=NULL, FechaAprobacion=NULL
+                WHERE OrdenCompraId=@id`);
+
+      await new sql.Request(transaction)
+        .input('id', sql.Int, orderId)
+        .query('DELETE FROM OrdenesCompraLineas WHERE OrdenCompraId=@id');
+
+      for (let i = 0; i < (LineItems || []).length; i++) {
+        const l = LineItems[i];
+        const cant = Number(l.Cantidad) || 0;
+        const pu   = Number(l.PrecioUnitario) || 0;
+        await new sql.Request(transaction)
+          .input('ocId', sql.Int,           orderId)
+          .input('desc', sql.NVarChar(500), l.Descripcion || '')
+          .input('cant', sql.Decimal(10,4), cant)
+          .input('um',   sql.NVarChar(50),  l.UnidadMedida || '')
+          .input('pu',   sql.Decimal(18,4), pu)
+          .input('sub',  sql.Decimal(18,2), Number((cant * pu).toFixed(2)))
+          .input('pid',  sql.Int,           l.ProductoId || null)
+          .input('lin',  sql.Int,           i + 1)
+          .query(`INSERT INTO OrdenesCompraLineas
+                    (OrdenCompraId,Descripcion,Cantidad,UnidadMedida,PrecioUnitario,Subtotal,ProductoId,OrdenLinea)
+                  VALUES(@ocId,@desc,@cant,@um,@pu,@sub,@pid,@lin)`);
+      }
+
+      await transaction.commit();
+      res.json({ ok: true });
+
+      // Notificar que la OC fue modificada y vuelve a autorización
+      const ocRes = await pool.request().input('id', sql.Int, orderId)
+        .query('SELECT Folio FROM OrdenesCompra WHERE OrdenCompraId=@id');
+      const folio = ocRes.recordset[0]?.Folio || '';
+      getEmailsDeRol('autorizador1').then(emails => {
+        if (emails.length) sendMail(emails,
+          `OC ${folio} modificada — requiere nueva autorización`,
+          emailOrdenCreada(folio, Proveedor || '', Total));
+      }).catch(() => {});
+
+    } catch (err) {
+      await transaction.rollback();
+      throw err;
+    }
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.delete("/api/ordenescompra/:id", autenticar, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
