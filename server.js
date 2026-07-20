@@ -2261,8 +2261,8 @@ app.post("/api/ordenescompra", async (req, res) => {
 app.put("/api/ordenescompra/:id", autenticar, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
-    if (req.usuario.rol !== 'admin')
-      return res.status(403).json({ error: 'Solo admin puede editar órdenes de compra' });
+    if (!['admin', 'jefe_mantenimiento'].includes(req.usuario.rol))
+      return res.status(403).json({ error: 'Sin permisos para editar órdenes de compra' });
 
     const orderId = Number(req.params.id);
     const { ProveedorId, UnidadNegocioId, Tipo, Destino, Observaciones, ConIva, Total, Subtotal, Iva, LineItems, Proveedor } = req.body;
