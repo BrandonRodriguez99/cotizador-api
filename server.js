@@ -693,6 +693,12 @@ sql
             ALTER TABLE dbo.OrdenesCompra ADD RecibidoPor NVARCHAR(150) NULL;
           IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.OrdenesCompraLineas') AND name='CantidadRecibida')
             ALTER TABLE dbo.OrdenesCompraLineas ADD CantidadRecibida DECIMAL(10,2) NULL;
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.OrdenesCompra') AND name='Subtotal')
+            ALTER TABLE dbo.OrdenesCompra ADD Subtotal DECIMAL(18,2) NOT NULL DEFAULT 0;
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.OrdenesCompra') AND name='Iva')
+            ALTER TABLE dbo.OrdenesCompra ADD Iva DECIMAL(18,2) NOT NULL DEFAULT 0;
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.OrdenesCompra') AND name='Total')
+            ALTER TABLE dbo.OrdenesCompra ADD Total DECIMAL(18,2) NOT NULL DEFAULT 0;
         `);
         console.log("✅ Tablas de consumos y recepción OC aseguradas");
 
@@ -2284,7 +2290,7 @@ app.put("/api/ordenescompra/:id", autenticar, async (req, res) => {
         .query(`UPDATE OrdenesCompra SET
           ProveedorId=@prov, UnidadNegocioId=@un, Tipo=@tipo,
           Destino=@dest, Observaciones=@obs, ConIva=@iva,
-          Subtotal=@sub, IVA=@ivaM, Total=@tot,
+          Subtotal=@sub, Iva=@ivaM, Total=@tot,
           Rechazado=0, RechazadoPor=NULL, MotivoRechazo=NULL, FechaRechazo=NULL
           WHERE OrdenCompraId=@id`);
 
