@@ -2318,7 +2318,7 @@ app.put("/api/ordenescompra/:id", autenticar, async (req, res) => {
           .input('pid',  sql.Int,           l.ProductoId || null)
           .input('lin',  sql.Int,           i + 1)
           .query(`INSERT INTO OrdenesCompraLineas
-                    (OrdenCompraId,Descripcion,Cantidad,UnidadMedida,PrecioUnitario,Subtotal,ProductoId,OrdenLinea)
+                    (OrdenCompraId,Descripcion,Cantidad,UnidadMedida,PrecioUnitario,Total,ProductoId,OrdenLinea)
                   VALUES(@ocId,@desc,@cant,@um,@pu,@sub,@pid,@lin)`);
       }
 
