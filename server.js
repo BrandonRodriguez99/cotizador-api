@@ -46,7 +46,8 @@ const config = {
 
 // CONEXIÓN SQL
 let pool;
-let visitasPK = 'VisitaId'; // nombre real de la PK de Visitas, detectado al startup
+let visitasPK   = 'VisitaId'; // nombre real de la PK de Visitas, detectado al startup
+let visitasCols = new Set(); // columnas que realmente existen en dbo.Visitas
 
 sql
   .connect(config)
@@ -779,7 +780,7 @@ sql
           }
         } catch (e) { console.log('⚠️ Visitas PK detect:', e.message); }
 
-        const visitasCols = [
+        const visitasColsDefs = [
           ['NombreVisitante', 'NVARCHAR(300) NULL'],
           ['Empresa',         'NVARCHAR(200) NULL'],
           ['Documento',       'NVARCHAR(100) NULL'],
@@ -793,7 +794,7 @@ sql
           ['Folio',           'NVARCHAR(50)  NULL'],
           ['FechaCreacion',   'DATETIME2     NOT NULL DEFAULT SYSUTCDATETIME()'],
         ];
-        for (const [col, def] of visitasCols) {
+        for (const [col, def] of visitasColsDefs) {
           try {
             await pool.request().query(`
               IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Visitas') AND name='${col}')
@@ -801,6 +802,14 @@ sql
             `);
           } catch (e) { console.log(`⚠️ Visitas ADD ${col}:`, e.message); }
         }
+        // Detectar columnas reales que existen ahora (para INSERTs dinámicos)
+        try {
+          const realCols = await pool.request().query(
+            `SELECT name FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Visitas')`
+          );
+          visitasCols = new Set(realCols.recordset.map(r => r.name));
+          console.log(`✅ Visitas cols disponibles: [${[...visitasCols].join(', ')}]`);
+        } catch (e) { console.log('⚠️ Visitas col detect:', e.message); }
         console.log('✅ Schema Visitas reparado');
 
       } catch (e) {
@@ -4294,17 +4303,24 @@ app.post('/api/seguridad/visitas', autenticar, async (req, res) => {
     if (!ensurePool(res)) return;
     const d       = req.body;
     const guardia = req.usuario?.nombre || '';
-    const r = await pool.request()
-      .input('NombreVisitante', sql.NVarChar(300), d.NombreVisitante || '')
-      .input('Empresa',         sql.NVarChar(200), d.Empresa         || null)
-      .input('Documento',       sql.NVarChar(100), d.Documento       || null)
-      .input('TipoVisita',      sql.NVarChar(50),  d.TipoVisita      || 'general')
-      .input('AQuienVisita',    sql.NVarChar(300), d.AQuienVisita    || null)
-      .input('Motivo',          sql.NVarChar(500), d.Motivo          || null)
-      .input('HoraEntrada',     sql.DateTime2,     new Date())
-      .query(`INSERT INTO dbo.Visitas (NombreVisitante,Empresa,Documento,TipoVisita,AQuienVisita,Motivo,HoraEntrada)
-              VALUES (@NombreVisitante,@Empresa,@Documento,@TipoVisita,@AQuienVisita,@Motivo,@HoraEntrada);
-              SELECT SCOPE_IDENTITY() AS id`);
+    const req2    = pool.request();
+    const names   = [];
+    const vals    = [];
+    const add = (col, type, val) => {
+      if (!visitasCols.size || visitasCols.has(col)) { req2.input(col, type, val); names.push(col); vals.push(`@${col}`); }
+    };
+    add('NombreVisitante', sql.NVarChar(300), d.NombreVisitante || '');
+    add('Empresa',         sql.NVarChar(200), d.Empresa         || null);
+    add('Documento',       sql.NVarChar(100), d.Documento       || null);
+    add('TipoVisita',      sql.NVarChar(50),  d.TipoVisita      || 'general');
+    add('AQuienVisita',    sql.NVarChar(300), d.AQuienVisita    || null);
+    add('Motivo',          sql.NVarChar(500), d.Motivo          || null);
+    add('HoraEntrada',     sql.DateTime2,     new Date());
+    add('Guardia',         sql.NVarChar(200), guardia);
+    const r = await req2.query(
+      `INSERT INTO dbo.Visitas (${names.join(',')}) VALUES (${vals.join(',')});
+       SELECT SCOPE_IDENTITY() AS id`
+    );
     const visitaId = r.recordset[0].id;
     const folio    = generateSegFolio('VIS', visitaId);
     try {
@@ -4667,17 +4683,24 @@ app.post('/api/public/registrar-visita', async (req, res) => {
     if (!ensurePool(res)) return;
     const d = req.body;
     if (!d.NombreVisitante?.trim()) return res.status(400).json({ error: 'El nombre del visitante es obligatorio' });
-    const r = await pool.request()
-      .input('NombreVisitante', sql.NVarChar(300), d.NombreVisitante.trim())
-      .input('Empresa',         sql.NVarChar(200), d.Empresa         || null)
-      .input('Documento',       sql.NVarChar(100), d.Documento       || null)
-      .input('TipoVisita',      sql.NVarChar(50),  d.TipoVisita      || 'general')
-      .input('AQuienVisita',    sql.NVarChar(300), d.AQuienVisita    || null)
-      .input('Motivo',          sql.NVarChar(500), d.Motivo          || null)
-      .input('HoraEntrada',     sql.DateTime2,     new Date())
-      .query(`INSERT INTO dbo.Visitas (NombreVisitante,Empresa,Documento,TipoVisita,AQuienVisita,Motivo,HoraEntrada)
-              VALUES (@NombreVisitante,@Empresa,@Documento,@TipoVisita,@AQuienVisita,@Motivo,@HoraEntrada);
-              SELECT SCOPE_IDENTITY() AS id`);
+    const req2  = pool.request();
+    const names = [];
+    const vals  = [];
+    const add = (col, type, val) => {
+      if (!visitasCols.size || visitasCols.has(col)) { req2.input(col, type, val); names.push(col); vals.push(`@${col}`); }
+    };
+    add('NombreVisitante', sql.NVarChar(300), d.NombreVisitante.trim());
+    add('Empresa',         sql.NVarChar(200), d.Empresa      || null);
+    add('Documento',       sql.NVarChar(100), d.Documento    || null);
+    add('TipoVisita',      sql.NVarChar(50),  d.TipoVisita   || 'general');
+    add('AQuienVisita',    sql.NVarChar(300), d.AQuienVisita || null);
+    add('Motivo',          sql.NVarChar(500), d.Motivo       || null);
+    add('HoraEntrada',     sql.DateTime2,     new Date());
+    add('Guardia',         sql.NVarChar(200), 'Autoregistro');
+    const r = await req2.query(
+      `INSERT INTO dbo.Visitas (${names.join(',')}) VALUES (${vals.join(',')});
+       SELECT SCOPE_IDENTITY() AS id`
+    );
     const visitaId = r.recordset[0].id;
     const folio    = generateSegFolio('VIS', visitaId);
     try {
