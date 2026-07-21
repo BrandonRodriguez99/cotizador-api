@@ -757,6 +757,45 @@ sql
           } catch {}
         }
 
+        // Reparar schema de Visitas: renombrar PK y agregar columnas faltantes (cada op independiente)
+        try {
+          // Renombrar columna identity a VisitaId si tiene otro nombre
+          const pkRes = await pool.request().query(`
+            SELECT TOP 1 c.name AS pk FROM sys.identity_columns c
+            WHERE c.object_id = OBJECT_ID('dbo.Visitas')
+              AND c.name <> 'VisitaId'
+          `);
+          if (pkRes.recordset.length > 0) {
+            const oldPK = pkRes.recordset[0].pk;
+            await pool.request().query(`EXEC sp_rename 'dbo.Visitas.${oldPK}', 'VisitaId', 'COLUMN'`);
+            console.log(`✅ Visitas: renombrado ${oldPK} → VisitaId`);
+          }
+        } catch (e) { console.log('⚠️ Visitas PK rename:', e.message); }
+
+        const visitasCols = [
+          ['NombreVisitante', 'NVARCHAR(300) NULL'],
+          ['Empresa',         'NVARCHAR(200) NULL'],
+          ['Documento',       'NVARCHAR(100) NULL'],
+          ['TipoVisita',      'NVARCHAR(50)  NULL'],
+          ['AQuienVisita',    'NVARCHAR(300) NULL'],
+          ['Motivo',          'NVARCHAR(500) NULL'],
+          ['Guardia',         'NVARCHAR(200) NULL'],
+          ['Observaciones',   'NVARCHAR(MAX) NULL'],
+          ['HoraEntrada',     'DATETIME2     NULL'],
+          ['HoraSalida',      'DATETIME2     NULL'],
+          ['Folio',           'NVARCHAR(50)  NULL'],
+          ['FechaCreacion',   'DATETIME2     NOT NULL DEFAULT SYSUTCDATETIME()'],
+        ];
+        for (const [col, def] of visitasCols) {
+          try {
+            await pool.request().query(`
+              IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Visitas') AND name='${col}')
+                ALTER TABLE dbo.Visitas ADD ${col} ${def}
+            `);
+          } catch (e) { console.log(`⚠️ Visitas ADD ${col}:`, e.message); }
+        }
+        console.log('✅ Schema Visitas reparado');
+
       } catch (e) {
         console.log("❌ Error asegurando tablas:", e);
       }
