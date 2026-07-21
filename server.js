@@ -4614,6 +4614,34 @@ app.post('/api/public/solicitud-vehiculo', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── Registro público de visitas ───────────────────────────────────────────────
+app.post('/api/public/registrar-visita', async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const d = req.body;
+    if (!d.NombreVisitante?.trim()) return res.status(400).json({ error: 'El nombre del visitante es obligatorio' });
+    const r = await pool.request()
+      .input('NombreVisitante', sql.NVarChar(300), d.NombreVisitante.trim())
+      .input('Empresa',         sql.NVarChar(200), d.Empresa         || null)
+      .input('Documento',       sql.NVarChar(100), d.Documento       || null)
+      .input('TipoVisita',      sql.NVarChar(50),  d.TipoVisita      || 'general')
+      .input('AQuienVisita',    sql.NVarChar(300), d.AQuienVisita    || null)
+      .input('Motivo',          sql.NVarChar(500), d.Motivo          || null)
+      .input('HoraEntrada',     sql.DateTime2,     new Date())
+      .input('Guardia',         sql.NVarChar(200), 'Autoregistro')
+      .query(`INSERT INTO dbo.Visitas (NombreVisitante,Empresa,Documento,TipoVisita,AQuienVisita,Motivo,HoraEntrada,Guardia)
+              VALUES (@NombreVisitante,@Empresa,@Documento,@TipoVisita,@AQuienVisita,@Motivo,@HoraEntrada,@Guardia);
+              SELECT SCOPE_IDENTITY() AS id`);
+    const visitaId = r.recordset[0].id;
+    const folio    = generateSegFolio('VIS', visitaId);
+    await pool.request()
+      .input('Folio',    sql.NVarChar(50), folio)
+      .input('id',       sql.Int,          visitaId)
+      .query('UPDATE dbo.Visitas SET Folio=@Folio WHERE VisitaId=@id');
+    res.json({ ok: true, folio });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ── Diagnóstico email ─────────────────────────────────────────────────────────
 app.get('/api/debug/test-email', async (req, res) => {
   if (!GMAIL_USER || !GMAIL_APP_PASS) return res.json({ ok: false, error: 'GMAIL_USER/GMAIL_APP_PASS no configurado' });
