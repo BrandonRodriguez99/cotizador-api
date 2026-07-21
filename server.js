@@ -4449,26 +4449,27 @@ app.get('/api/seguridad/dashboard', autenticar, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
     const hoy = new Date().toISOString().substring(0, 10);
+    const safe = async (fn) => { try { return await fn() } catch { return null } };
     const [rondines, visitas, vehiculos, incidencias] = await Promise.all([
-      pool.request().input('hoy', sql.Date, hoy).query(
+      safe(() => pool.request().input('hoy', sql.Date, hoy).query(
         `SELECT COUNT(*) AS hoy, SUM(CASE WHEN Estado='en_curso' THEN 1 ELSE 0 END) AS activos
-         FROM Rondines WHERE CAST(FechaCreacion AS DATE)=@hoy`),
-      pool.request().input('hoy', sql.Date, hoy).query(
+         FROM dbo.Rondines WHERE CAST(FechaCreacion AS DATE)=@hoy`)),
+      safe(() => pool.request().input('hoy', sql.Date, hoy).query(
         `SELECT COUNT(*) AS hoy, SUM(CASE WHEN HoraSalida IS NULL THEN 1 ELSE 0 END) AS activos
-         FROM Visitas WHERE CAST(FechaCreacion AS DATE)=@hoy`),
-      pool.request().query(`SELECT Estado, COUNT(*) AS total FROM OrdenesVehiculo GROUP BY Estado`),
-      pool.request().query(`SELECT COUNT(*) AS total FROM RondinesRegistros WHERE TieneIncidencia=1`),
+         FROM dbo.Visitas WHERE CAST(FechaCreacion AS DATE)=@hoy`)),
+      safe(() => pool.request().query(`SELECT Estado, COUNT(*) AS total FROM dbo.OrdenesVehiculo GROUP BY Estado`)),
+      safe(() => pool.request().query(`SELECT COUNT(*) AS total FROM dbo.RondinesRegistros WHERE TieneIncidencia=1`)),
     ]);
     const estadosV = {};
-    vehiculos.recordset.forEach(r => { estadosV[r.Estado] = r.total; });
+    (vehiculos?.recordset || []).forEach(r => { estadosV[r.Estado] = r.total; });
     res.json({
-      rondinesHoy:        rondines.recordset[0].hoy     || 0,
-      rondinesActivos:    rondines.recordset[0].activos  || 0,
-      visitasHoy:         visitas.recordset[0].hoy       || 0,
-      visitasAdentro:     visitas.recordset[0].activos   || 0,
-      vehiculosPendientes:estadosV.pendiente  || 0,
-      vehiculosEnCurso:   estadosV.en_curso   || 0,
-      totalIncidencias:   incidencias.recordset[0].total || 0,
+      rondinesHoy:         rondines?.recordset[0]?.hoy     || 0,
+      rondinesActivos:     rondines?.recordset[0]?.activos  || 0,
+      visitasHoy:          visitas?.recordset[0]?.hoy       || 0,
+      visitasAdentro:      visitas?.recordset[0]?.activos   || 0,
+      vehiculosPendientes: estadosV.pendiente  || 0,
+      vehiculosEnCurso:    estadosV.en_curso   || 0,
+      totalIncidencias:    incidencias?.recordset[0]?.total || 0,
     });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
