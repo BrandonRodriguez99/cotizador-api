@@ -595,9 +595,9 @@ sql
             );
           END
 
-          IF OBJECT_ID('dbo.VisitasSeguridadSeguridad','U') IS NULL
+          IF OBJECT_ID('dbo.VisitasSeguridad','U') IS NULL
           BEGIN
-            CREATE TABLE dbo.VisitasSeguridadSeguridad (
+            CREATE TABLE dbo.VisitasSeguridad (
               VisitaId        INT IDENTITY(1,1) PRIMARY KEY,
               Folio           NVARCHAR(50)  NULL,
               NombreVisitante NVARCHAR(300) NOT NULL,
@@ -709,8 +709,8 @@ sql
             ALTER TABLE dbo.OrdenesCompra ADD Iva DECIMAL(18,2) NOT NULL DEFAULT 0;
           IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.OrdenesCompra') AND name='Total')
             ALTER TABLE dbo.OrdenesCompra ADD Total DECIMAL(18,2) NOT NULL DEFAULT 0;
-          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.VisitasSeguridadSeguridad') AND name='FechaCreacion')
-            ALTER TABLE dbo.VisitasSeguridadSeguridad ADD FechaCreacion DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME();
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.VisitasSeguridad') AND name='FechaCreacion')
+            ALTER TABLE dbo.VisitasSeguridad ADD FechaCreacion DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME();
           IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Rondines') AND name='FechaCreacion')
             ALTER TABLE dbo.Rondines ADD FechaCreacion DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME();
           IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.OrdenesVehiculo') AND name='FechaCreacion')
@@ -722,7 +722,7 @@ sql
         visitasPK = 'VisitaId'; // siempre VisitaId en la nueva tabla
         try {
           const realCols = await pool.request().query(
-            `SELECT name FROM sys.columns WHERE object_id=OBJECT_ID('dbo.VisitasSeguridadSeguridad')`
+            `SELECT name FROM sys.columns WHERE object_id=OBJECT_ID('dbo.VisitasSeguridad')`
           );
           visitasCols = new Set(realCols.recordset.map(r => r.name));
           console.log(`✅ VisitasSeguridad cols: [${[...visitasCols].join(', ')}]`);
