@@ -1152,7 +1152,7 @@ const tableSchemas = {
   },
   OrdenesCompraLineas: {
     cantidad: "Cantidad", descripcion: "Descripcion", unidadmedida: "UnidadMedida",
-    preciounitario: "PrecioUnitario", total: "Total", ordenlinea: "OrdenLinea",
+    preciounitario: "PrecioUnitario", total: "Total", subtotal: "Total", ordenlinea: "OrdenLinea",
     ordencompralid: "OrdenCompraId", ordencompraid: "OrdenCompraId",
     productoid: "ProductoId",
   },
@@ -2962,7 +2962,7 @@ app.get("/api/ordenescompra/:id/pdf", async (req, res) => {
     const totalRows  = Math.max(dataLineas.length, 8);
     for (let i = 0; i < totalRows; i++) {
       const l = dataLineas[i];
-      const subtotal = l ? (l.Total != null ? Number(l.Total) : Number(l.Cantidad || 0) * Number(l.PrecioUnitario || 0)) : null;
+      const subtotal = l ? (Number(l.Cantidad || 0) * Number(l.PrecioUnitario || 0)) : null;
       const rowFill  = i % 2 === 0 ? "#ffffff" : "#f8fafc";
       const vals = l ? [l.Cantidad || "", l.Descripcion, l.UnidadMedida || "", fmtMXN(l.PrecioUnitario), fmtMXN(subtotal)] : ["", "", "", "", ""];
       cx = ML;
