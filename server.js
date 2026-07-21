@@ -699,6 +699,12 @@ sql
             ALTER TABLE dbo.OrdenesCompra ADD Iva DECIMAL(18,2) NOT NULL DEFAULT 0;
           IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.OrdenesCompra') AND name='Total')
             ALTER TABLE dbo.OrdenesCompra ADD Total DECIMAL(18,2) NOT NULL DEFAULT 0;
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Visitas') AND name='FechaCreacion')
+            ALTER TABLE dbo.Visitas ADD FechaCreacion DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME();
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Rondines') AND name='FechaCreacion')
+            ALTER TABLE dbo.Rondines ADD FechaCreacion DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME();
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.OrdenesVehiculo') AND name='FechaCreacion')
+            ALTER TABLE dbo.OrdenesVehiculo ADD FechaCreacion DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME();
         `);
         console.log("✅ Tablas de consumos y recepción OC aseguradas");
 
@@ -4180,9 +4186,9 @@ app.get('/api/seguridad/visitas', autenticar, async (req, res) => {
     if (!ensurePool(res)) return;
     const { fecha } = req.query;
     const req2 = pool.request();
-    let q = 'SELECT * FROM Visitas';
-    if (fecha) { q += ' WHERE CAST(FechaCreacion AS DATE)=@fecha'; req2.input('fecha', sql.Date, fecha); }
-    q += ' ORDER BY FechaCreacion DESC';
+    let q = 'SELECT * FROM dbo.Visitas';
+    if (fecha) { q += ' WHERE CAST(ISNULL(FechaCreacion, HoraEntrada) AS DATE)=@fecha'; req2.input('fecha', sql.Date, fecha); }
+    q += ' ORDER BY ISNULL(FechaCreacion, HoraEntrada) DESC';
     const r = await req2.query(q);
     res.json(r.recordset);
   } catch (err) { res.status(500).json({ error: err.message }); }
