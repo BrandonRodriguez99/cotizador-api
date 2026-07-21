@@ -47,7 +47,7 @@ const config = {
 // CONEXIÓN SQL
 let pool;
 let visitasPK   = 'VisitaId'; // nombre real de la PK de Visitas, detectado al startup
-let visitasCols = new Set(); // columnas que realmente existen en dbo.Visitas
+let visitasCols = new Set(); // columnas que realmente existen en dbo.VisitasSeguridad
 
 sql
   .connect(config)
@@ -595,42 +595,9 @@ sql
             );
           END
 
-          IF OBJECT_ID('dbo.Visitas','U') IS NOT NULL
+          IF OBJECT_ID('dbo.VisitasSeguridadSeguridad','U') IS NULL
           BEGIN
-            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Visitas') AND name='VisitaId')
-            BEGIN
-              DECLARE @visOldPK NVARCHAR(128)
-              SELECT TOP 1 @visOldPK = c.name FROM sys.identity_columns c WHERE c.object_id = OBJECT_ID('dbo.Visitas')
-              IF @visOldPK IS NOT NULL
-                EXEC sp_rename CONCAT('dbo.Visitas.', @visOldPK), 'VisitaId', 'COLUMN'
-            END
-            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Visitas') AND name='NombreVisitante')
-              ALTER TABLE dbo.Visitas ADD NombreVisitante NVARCHAR(300) NULL
-            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Visitas') AND name='HoraEntrada')
-              ALTER TABLE dbo.Visitas ADD HoraEntrada DATETIME2 NULL
-            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Visitas') AND name='HoraSalida')
-              ALTER TABLE dbo.Visitas ADD HoraSalida DATETIME2 NULL
-            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Visitas') AND name='Folio')
-              ALTER TABLE dbo.Visitas ADD Folio NVARCHAR(50) NULL
-            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Visitas') AND name='Empresa')
-              ALTER TABLE dbo.Visitas ADD Empresa NVARCHAR(200) NULL
-            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Visitas') AND name='Documento')
-              ALTER TABLE dbo.Visitas ADD Documento NVARCHAR(100) NULL
-            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Visitas') AND name='TipoVisita')
-              ALTER TABLE dbo.Visitas ADD TipoVisita NVARCHAR(50) NULL
-            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Visitas') AND name='AQuienVisita')
-              ALTER TABLE dbo.Visitas ADD AQuienVisita NVARCHAR(300) NULL
-            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Visitas') AND name='Motivo')
-              ALTER TABLE dbo.Visitas ADD Motivo NVARCHAR(500) NULL
-            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Visitas') AND name='Guardia')
-              ALTER TABLE dbo.Visitas ADD Guardia NVARCHAR(200) NULL
-            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Visitas') AND name='Observaciones')
-              ALTER TABLE dbo.Visitas ADD Observaciones NVARCHAR(MAX) NULL
-          END
-
-          IF OBJECT_ID('dbo.Visitas','U') IS NULL
-          BEGIN
-            CREATE TABLE dbo.Visitas (
+            CREATE TABLE dbo.VisitasSeguridadSeguridad (
               VisitaId        INT IDENTITY(1,1) PRIMARY KEY,
               Folio           NVARCHAR(50)  NULL,
               NombreVisitante NVARCHAR(300) NOT NULL,
@@ -742,8 +709,8 @@ sql
             ALTER TABLE dbo.OrdenesCompra ADD Iva DECIMAL(18,2) NOT NULL DEFAULT 0;
           IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.OrdenesCompra') AND name='Total')
             ALTER TABLE dbo.OrdenesCompra ADD Total DECIMAL(18,2) NOT NULL DEFAULT 0;
-          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Visitas') AND name='FechaCreacion')
-            ALTER TABLE dbo.Visitas ADD FechaCreacion DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME();
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.VisitasSeguridadSeguridad') AND name='FechaCreacion')
+            ALTER TABLE dbo.VisitasSeguridadSeguridad ADD FechaCreacion DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME();
           IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Rondines') AND name='FechaCreacion')
             ALTER TABLE dbo.Rondines ADD FechaCreacion DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME();
           IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.OrdenesVehiculo') AND name='FechaCreacion')
@@ -751,66 +718,16 @@ sql
         `);
         console.log("✅ Tablas de consumos y recepción OC aseguradas");
 
-        // Diagnóstico: columnas reales de tablas de seguridad
-        for (const t of ['Visitas', 'Rondines', 'RondinesRegistros']) {
-          try {
-            const dc = await pool.request().query(`SELECT name FROM sys.columns WHERE object_id=OBJECT_ID('dbo.${t}') ORDER BY column_id`);
-            console.log(`📋 ${t} cols: [${dc.recordset.map(r => r.name).join(', ')}]`);
-          } catch {}
-        }
-
-        // Reparar schema de Visitas: renombrar PK y agregar columnas faltantes (cada op independiente)
-        try {
-          // Detectar nombre real de la PK (identity column) de Visitas
-          const pkRes = await pool.request().query(`
-            SELECT TOP 1 c.name AS pk FROM sys.identity_columns c
-            WHERE c.object_id = OBJECT_ID('dbo.Visitas')
-          `);
-          if (pkRes.recordset.length > 0) {
-            visitasPK = pkRes.recordset[0].pk; // guardar para usar en queries
-            console.log(`✅ Visitas PK detectada: ${visitasPK}`);
-            // Intentar renombrar a VisitaId si tiene otro nombre
-            if (visitasPK !== 'VisitaId') {
-              try {
-                await pool.request().query(`EXEC sp_rename 'dbo.Visitas.${visitasPK}', 'VisitaId', 'COLUMN'`);
-                visitasPK = 'VisitaId';
-                console.log(`✅ Visitas: renombrado → VisitaId`);
-              } catch (e2) { console.log(`⚠️ Visitas PK rename falló (usaremos ${visitasPK}):`, e2.message); }
-            }
-          }
-        } catch (e) { console.log('⚠️ Visitas PK detect:', e.message); }
-
-        const visitasColsDefs = [
-          ['NombreVisitante', 'NVARCHAR(300) NULL'],
-          ['Empresa',         'NVARCHAR(200) NULL'],
-          ['Documento',       'NVARCHAR(100) NULL'],
-          ['TipoVisita',      'NVARCHAR(50)  NULL'],
-          ['AQuienVisita',    'NVARCHAR(300) NULL'],
-          ['Motivo',          'NVARCHAR(500) NULL'],
-          ['Guardia',         'NVARCHAR(200) NULL'],
-          ['Observaciones',   'NVARCHAR(MAX) NULL'],
-          ['HoraEntrada',     'DATETIME2     NULL'],
-          ['HoraSalida',      'DATETIME2     NULL'],
-          ['Folio',           'NVARCHAR(50)  NULL'],
-          ['FechaCreacion',   'DATETIME2     NOT NULL DEFAULT SYSUTCDATETIME()'],
-        ];
-        for (const [col, def] of visitasColsDefs) {
-          try {
-            await pool.request().query(`
-              IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Visitas') AND name='${col}')
-                ALTER TABLE dbo.Visitas ADD ${col} ${def}
-            `);
-          } catch (e) { console.log(`⚠️ Visitas ADD ${col}:`, e.message); }
-        }
-        // Detectar columnas reales que existen ahora (para INSERTs dinámicos)
+        // Poblar visitasCols con las columnas reales de VisitasSeguridad
+        visitasPK = 'VisitaId'; // siempre VisitaId en la nueva tabla
         try {
           const realCols = await pool.request().query(
-            `SELECT name FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Visitas')`
+            `SELECT name FROM sys.columns WHERE object_id=OBJECT_ID('dbo.VisitasSeguridadSeguridad')`
           );
           visitasCols = new Set(realCols.recordset.map(r => r.name));
-          console.log(`✅ Visitas cols disponibles: [${[...visitasCols].join(', ')}]`);
-        } catch (e) { console.log('⚠️ Visitas col detect:', e.message); }
-        console.log('✅ Schema Visitas reparado');
+          console.log(`✅ VisitasSeguridad cols: [${[...visitasCols].join(', ')}]`);
+        } catch (e) { console.log('⚠️ VisitasSeguridad col detect:', e.message); }
+        console.log('✅ Schema VisitasSeguridad listo');
 
       } catch (e) {
         console.log("❌ Error asegurando tablas:", e);
@@ -4290,7 +4207,7 @@ app.get('/api/seguridad/visitas', autenticar, async (req, res) => {
     if (!ensurePool(res)) return;
     const { fecha } = req.query;
     const req2 = pool.request();
-    let q = 'SELECT * FROM dbo.Visitas';
+    let q = 'SELECT * FROM dbo.VisitasSeguridad';
     if (fecha) { q += ' WHERE CAST(FechaCreacion AS DATE)=@fecha'; req2.input('fecha', sql.Date, fecha); }
     q += ' ORDER BY FechaCreacion DESC';
     const r = await req2.query(q);
@@ -4306,7 +4223,7 @@ app.post('/api/seguridad/visitas', autenticar, async (req, res) => {
     // Detectar columnas en el momento si startup no lo hizo
     if (!visitasCols.size) {
       try {
-        const cr = await pool.request().query(`SELECT name FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Visitas')`);
+        const cr = await pool.request().query(`SELECT name FROM sys.columns WHERE object_id=OBJECT_ID('dbo.VisitasSeguridad')`);
         if (cr.recordset.length) visitasCols = new Set(cr.recordset.map(r => r.name));
       } catch {}
     }
@@ -4326,14 +4243,14 @@ app.post('/api/seguridad/visitas', autenticar, async (req, res) => {
     add('HoraEntrada',     sql.DateTime2,     new Date());
     add('Guardia',         sql.NVarChar(200), guardia);
     const r = await req2.query(
-      `INSERT INTO dbo.Visitas (${names.join(',')}) VALUES (${vals.join(',')});
+      `INSERT INTO dbo.VisitasSeguridad (${names.join(',')}) VALUES (${vals.join(',')});
        SELECT SCOPE_IDENTITY() AS id`
     );
     const visitaId = r.recordset[0].id;
     const folio    = generateSegFolio('VIS', visitaId);
     try {
       await pool.request().input('id', sql.Int, visitaId).input('Folio', sql.NVarChar(50), folio)
-        .query(`UPDATE dbo.Visitas SET Folio=@Folio WHERE ${visitasPK}=@id`);
+        .query(`UPDATE dbo.VisitasSeguridad SET Folio=@Folio WHERE ${visitasPK}=@id`);
     } catch {}
     res.json({ ok: true, visitaId, folio });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -4347,7 +4264,7 @@ app.put('/api/seguridad/visitas/:id/salida', autenticar, async (req, res) => {
       .input('id',           sql.Int,           Number(req.params.id))
       .input('HoraSalida',   sql.DateTime2,     new Date())
       .input('Observaciones',sql.NVarChar(4000),Observaciones || null)
-      .query(`UPDATE dbo.Visitas SET HoraSalida=@HoraSalida,Observaciones=@Observaciones WHERE ${visitasPK}=@id`);
+      .query(`UPDATE dbo.VisitasSeguridad SET HoraSalida=@HoraSalida,Observaciones=@Observaciones WHERE ${visitasPK}=@id`);
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -4544,7 +4461,7 @@ app.delete('/api/seguridad/visitas/:id', autenticar, soloAdminOJefeSeg, async (r
     if (!ensurePool(res)) return;
     await pool.request()
       .input('id', sql.Int, Number(req.params.id))
-      .query(`DELETE FROM dbo.Visitas WHERE ${visitasPK}=@id`);
+      .query(`DELETE FROM dbo.VisitasSeguridad WHERE ${visitasPK}=@id`);
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -4582,7 +4499,7 @@ app.get('/api/seguridad/dashboard', autenticar, async (req, res) => {
          FROM dbo.Rondines WHERE CAST(FechaCreacion AS DATE)=@hoy`)),
       safe(() => pool.request().input('hoy', sql.Date, hoy).query(
         `SELECT COUNT(*) AS hoy, SUM(CASE WHEN HoraSalida IS NULL THEN 1 ELSE 0 END) AS activos
-         FROM dbo.Visitas WHERE CAST(FechaCreacion AS DATE)=@hoy`)),
+         FROM dbo.VisitasSeguridad WHERE CAST(FechaCreacion AS DATE)=@hoy`)),
       safe(() => pool.request().query(`SELECT Estado, COUNT(*) AS total FROM dbo.OrdenesVehiculo GROUP BY Estado`)),
       safe(() => pool.request().query(`SELECT COUNT(*) AS total FROM dbo.RondinesRegistros WHERE TieneIncidencia=1`)),
     ]);
@@ -4694,7 +4611,7 @@ app.post('/api/public/registrar-visita', async (req, res) => {
     // Detectar columnas en el momento si startup no lo hizo
     if (!visitasCols.size) {
       try {
-        const cr = await pool.request().query(`SELECT name FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Visitas')`);
+        const cr = await pool.request().query(`SELECT name FROM sys.columns WHERE object_id=OBJECT_ID('dbo.VisitasSeguridad')`);
         if (cr.recordset.length) visitasCols = new Set(cr.recordset.map(r => r.name));
       } catch {}
     }
@@ -4714,7 +4631,7 @@ app.post('/api/public/registrar-visita', async (req, res) => {
     add('HoraEntrada',     sql.DateTime2,     new Date());
     add('Guardia',         sql.NVarChar(200), 'Autoregistro');
     const r = await req2.query(
-      `INSERT INTO dbo.Visitas (${names.join(',')}) VALUES (${vals.join(',')});
+      `INSERT INTO dbo.VisitasSeguridad (${names.join(',')}) VALUES (${vals.join(',')});
        SELECT SCOPE_IDENTITY() AS id`
     );
     const visitaId = r.recordset[0].id;
@@ -4723,7 +4640,7 @@ app.post('/api/public/registrar-visita', async (req, res) => {
       await pool.request()
         .input('Folio', sql.NVarChar(50), folio)
         .input('id',    sql.Int,          visitaId)
-        .query(`UPDATE dbo.Visitas SET Folio=@Folio WHERE ${visitasPK}=@id`);
+        .query(`UPDATE dbo.VisitasSeguridad SET Folio=@Folio WHERE ${visitasPK}=@id`);
     } catch {}
     res.json({ ok: true, folio });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -4745,7 +4662,7 @@ app.get('/api/debug/test-email', async (req, res) => {
 app.get('/api/debug/schema/:tabla', async (req, res) => {
   try {
     if (!pool) return res.status(503).json({ error: 'Sin conexión BD' });
-    const t = req.params.tabla.replace(/[^a-zA-Z0-9_]/g, '');
+    const t = req.params.tabla.replace(/[^a-zA-Z0-9_]/g, '') || 'VisitasSeguridad';
     const r = await pool.request().query(`
       SELECT c.name, TYPE_NAME(c.system_type_id) AS tipo, c.is_nullable, c.is_identity
       FROM sys.columns c
