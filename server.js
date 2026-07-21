@@ -4303,11 +4303,19 @@ app.post('/api/seguridad/visitas', autenticar, async (req, res) => {
     if (!ensurePool(res)) return;
     const d       = req.body;
     const guardia = req.usuario?.nombre || '';
+    // Detectar columnas en el momento si startup no lo hizo
+    if (!visitasCols.size) {
+      try {
+        const cr = await pool.request().query(`SELECT name FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Visitas')`);
+        if (cr.recordset.length) visitasCols = new Set(cr.recordset.map(r => r.name));
+      } catch {}
+    }
+    const knownCols = visitasCols.size ? visitasCols : new Set(['NombreVisitante','Empresa','Documento','TipoVisita','AQuienVisita','Motivo']);
     const req2    = pool.request();
     const names   = [];
     const vals    = [];
     const add = (col, type, val) => {
-      if (!visitasCols.size || visitasCols.has(col)) { req2.input(col, type, val); names.push(col); vals.push(`@${col}`); }
+      if (knownCols.has(col)) { req2.input(col, type, val); names.push(col); vals.push(`@${col}`); }
     };
     add('NombreVisitante', sql.NVarChar(300), d.NombreVisitante || '');
     add('Empresa',         sql.NVarChar(200), d.Empresa         || null);
@@ -4683,11 +4691,19 @@ app.post('/api/public/registrar-visita', async (req, res) => {
     if (!ensurePool(res)) return;
     const d = req.body;
     if (!d.NombreVisitante?.trim()) return res.status(400).json({ error: 'El nombre del visitante es obligatorio' });
+    // Detectar columnas en el momento si startup no lo hizo
+    if (!visitasCols.size) {
+      try {
+        const cr = await pool.request().query(`SELECT name FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Visitas')`);
+        if (cr.recordset.length) visitasCols = new Set(cr.recordset.map(r => r.name));
+      } catch {}
+    }
+    const knownCols = visitasCols.size ? visitasCols : new Set(['NombreVisitante','Empresa','Documento','TipoVisita','AQuienVisita','Motivo']);
     const req2  = pool.request();
     const names = [];
     const vals  = [];
     const add = (col, type, val) => {
-      if (!visitasCols.size || visitasCols.has(col)) { req2.input(col, type, val); names.push(col); vals.push(`@${col}`); }
+      if (knownCols.has(col)) { req2.input(col, type, val); names.push(col); vals.push(`@${col}`); }
     };
     add('NombreVisitante', sql.NVarChar(300), d.NombreVisitante.trim());
     add('Empresa',         sql.NVarChar(200), d.Empresa      || null);
