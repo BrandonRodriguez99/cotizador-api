@@ -594,8 +594,37 @@ sql
           END
 
           IF OBJECT_ID('dbo.Visitas','U') IS NOT NULL
+          BEGIN
             IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Visitas') AND name='VisitaId')
-              DROP TABLE dbo.Visitas;
+            BEGIN
+              DECLARE @visOldPK NVARCHAR(128)
+              SELECT TOP 1 @visOldPK = c.name FROM sys.identity_columns c WHERE c.object_id = OBJECT_ID('dbo.Visitas')
+              IF @visOldPK IS NOT NULL
+                EXEC sp_rename CONCAT('dbo.Visitas.', @visOldPK), 'VisitaId', 'COLUMN'
+            END
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Visitas') AND name='NombreVisitante')
+              ALTER TABLE dbo.Visitas ADD NombreVisitante NVARCHAR(300) NULL
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Visitas') AND name='HoraEntrada')
+              ALTER TABLE dbo.Visitas ADD HoraEntrada DATETIME2 NULL
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Visitas') AND name='HoraSalida')
+              ALTER TABLE dbo.Visitas ADD HoraSalida DATETIME2 NULL
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Visitas') AND name='Folio')
+              ALTER TABLE dbo.Visitas ADD Folio NVARCHAR(50) NULL
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Visitas') AND name='Empresa')
+              ALTER TABLE dbo.Visitas ADD Empresa NVARCHAR(200) NULL
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Visitas') AND name='Documento')
+              ALTER TABLE dbo.Visitas ADD Documento NVARCHAR(100) NULL
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Visitas') AND name='TipoVisita')
+              ALTER TABLE dbo.Visitas ADD TipoVisita NVARCHAR(50) NULL
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Visitas') AND name='AQuienVisita')
+              ALTER TABLE dbo.Visitas ADD AQuienVisita NVARCHAR(300) NULL
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Visitas') AND name='Motivo')
+              ALTER TABLE dbo.Visitas ADD Motivo NVARCHAR(500) NULL
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Visitas') AND name='Guardia')
+              ALTER TABLE dbo.Visitas ADD Guardia NVARCHAR(200) NULL
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Visitas') AND name='Observaciones')
+              ALTER TABLE dbo.Visitas ADD Observaciones NVARCHAR(MAX) NULL
+          END
 
           IF OBJECT_ID('dbo.Visitas','U') IS NULL
           BEGIN
@@ -719,6 +748,14 @@ sql
             ALTER TABLE dbo.OrdenesVehiculo ADD FechaCreacion DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME();
         `);
         console.log("✅ Tablas de consumos y recepción OC aseguradas");
+
+        // Diagnóstico: columnas reales de tablas de seguridad
+        for (const t of ['Visitas', 'Rondines', 'RondinesRegistros']) {
+          try {
+            const dc = await pool.request().query(`SELECT name FROM sys.columns WHERE object_id=OBJECT_ID('dbo.${t}') ORDER BY column_id`);
+            console.log(`📋 ${t} cols: [${dc.recordset.map(r => r.name).join(', ')}]`);
+          } catch {}
+        }
 
       } catch (e) {
         console.log("❌ Error asegurando tablas:", e);
