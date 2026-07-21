@@ -536,8 +536,8 @@ sql
 
         await pool.request().query(`
           IF OBJECT_ID('dbo.Rondines','U') IS NOT NULL
-            AND NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Rondines') AND name='RondinId')
-            DROP TABLE dbo.Rondines;
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Rondines') AND name='RondinId')
+              DROP TABLE dbo.Rondines;
 
           IF OBJECT_ID('dbo.Rondines','U') IS NULL
           BEGIN
@@ -554,8 +554,8 @@ sql
           END
 
           IF OBJECT_ID('dbo.RondinesRegistros','U') IS NOT NULL
-            AND NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.RondinesRegistros') AND name='RegistroId')
-            DROP TABLE dbo.RondinesRegistros;
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.RondinesRegistros') AND name='RegistroId')
+              DROP TABLE dbo.RondinesRegistros;
 
           IF OBJECT_ID('dbo.RondinesRegistros','U') IS NULL
           BEGIN
@@ -594,8 +594,8 @@ sql
           END
 
           IF OBJECT_ID('dbo.Visitas','U') IS NOT NULL
-            AND NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Visitas') AND name='VisitaId')
-            DROP TABLE dbo.Visitas;
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Visitas') AND name='VisitaId')
+              DROP TABLE dbo.Visitas;
 
           IF OBJECT_ID('dbo.Visitas','U') IS NULL
           BEGIN
