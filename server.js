@@ -4741,6 +4741,21 @@ app.get('/api/debug/test-email', async (req, res) => {
   }
 });
 
+// ── Diagnóstico schema tablas seguridad ───────────────────────────────────────
+app.get('/api/debug/schema/:tabla', async (req, res) => {
+  try {
+    if (!pool) return res.status(503).json({ error: 'Sin conexión BD' });
+    const t = req.params.tabla.replace(/[^a-zA-Z0-9_]/g, '');
+    const r = await pool.request().query(`
+      SELECT c.name, TYPE_NAME(c.system_type_id) AS tipo, c.is_nullable, c.is_identity
+      FROM sys.columns c
+      WHERE c.object_id = OBJECT_ID('dbo.${t}')
+      ORDER BY c.column_id
+    `);
+    res.json({ tabla: t, columnas: r.recordset, visitasColsCache: [...visitasCols] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ─── SERVER ───────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => console.log(`🚀 Servidor corriendo en puerto ${PORT}`));
