@@ -4199,8 +4199,8 @@ app.get('/api/seguridad/visitas', autenticar, async (req, res) => {
     const { fecha } = req.query;
     const req2 = pool.request();
     let q = 'SELECT * FROM dbo.Visitas';
-    if (fecha) { q += ' WHERE CAST(ISNULL(FechaCreacion, HoraEntrada) AS DATE)=@fecha'; req2.input('fecha', sql.Date, fecha); }
-    q += ' ORDER BY ISNULL(FechaCreacion, HoraEntrada) DESC';
+    if (fecha) { q += ' WHERE CAST(FechaCreacion AS DATE)=@fecha'; req2.input('fecha', sql.Date, fecha); }
+    q += ' ORDER BY FechaCreacion DESC';
     const r = await req2.query(q);
     res.json(r.recordset);
   } catch (err) { res.status(500).json({ error: err.message }); }
