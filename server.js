@@ -46,6 +46,7 @@ const config = {
 
 // CONEXIÓN SQL
 let pool;
+let visitasPK = 'VisitaId'; // nombre real de la PK de Visitas, detectado al startup
 
 sql
   .connect(config)
@@ -759,18 +760,24 @@ sql
 
         // Reparar schema de Visitas: renombrar PK y agregar columnas faltantes (cada op independiente)
         try {
-          // Renombrar columna identity a VisitaId si tiene otro nombre
+          // Detectar nombre real de la PK (identity column) de Visitas
           const pkRes = await pool.request().query(`
             SELECT TOP 1 c.name AS pk FROM sys.identity_columns c
             WHERE c.object_id = OBJECT_ID('dbo.Visitas')
-              AND c.name <> 'VisitaId'
           `);
           if (pkRes.recordset.length > 0) {
-            const oldPK = pkRes.recordset[0].pk;
-            await pool.request().query(`EXEC sp_rename 'dbo.Visitas.${oldPK}', 'VisitaId', 'COLUMN'`);
-            console.log(`✅ Visitas: renombrado ${oldPK} → VisitaId`);
+            visitasPK = pkRes.recordset[0].pk; // guardar para usar en queries
+            console.log(`✅ Visitas PK detectada: ${visitasPK}`);
+            // Intentar renombrar a VisitaId si tiene otro nombre
+            if (visitasPK !== 'VisitaId') {
+              try {
+                await pool.request().query(`EXEC sp_rename 'dbo.Visitas.${visitasPK}', 'VisitaId', 'COLUMN'`);
+                visitasPK = 'VisitaId';
+                console.log(`✅ Visitas: renombrado → VisitaId`);
+              } catch (e2) { console.log(`⚠️ Visitas PK rename falló (usaremos ${visitasPK}):`, e2.message); }
+            }
           }
-        } catch (e) { console.log('⚠️ Visitas PK rename:', e.message); }
+        } catch (e) { console.log('⚠️ Visitas PK detect:', e.message); }
 
         const visitasCols = [
           ['NombreVisitante', 'NVARCHAR(300) NULL'],
@@ -4295,14 +4302,15 @@ app.post('/api/seguridad/visitas', autenticar, async (req, res) => {
       .input('AQuienVisita',    sql.NVarChar(300), d.AQuienVisita    || null)
       .input('Motivo',          sql.NVarChar(500), d.Motivo          || null)
       .input('HoraEntrada',     sql.DateTime2,     new Date())
-      .input('Guardia',         sql.NVarChar(200), guardia)
-      .query(`INSERT INTO Visitas (NombreVisitante,Empresa,Documento,TipoVisita,AQuienVisita,Motivo,HoraEntrada,Guardia)
-              VALUES (@NombreVisitante,@Empresa,@Documento,@TipoVisita,@AQuienVisita,@Motivo,@HoraEntrada,@Guardia);
+      .query(`INSERT INTO dbo.Visitas (NombreVisitante,Empresa,Documento,TipoVisita,AQuienVisita,Motivo,HoraEntrada)
+              VALUES (@NombreVisitante,@Empresa,@Documento,@TipoVisita,@AQuienVisita,@Motivo,@HoraEntrada);
               SELECT SCOPE_IDENTITY() AS id`);
     const visitaId = r.recordset[0].id;
     const folio    = generateSegFolio('VIS', visitaId);
-    await pool.request().input('id', sql.Int, visitaId).input('Folio', sql.NVarChar(50), folio)
-      .query('UPDATE Visitas SET Folio=@Folio WHERE VisitaId=@id');
+    try {
+      await pool.request().input('id', sql.Int, visitaId).input('Folio', sql.NVarChar(50), folio)
+        .query(`UPDATE dbo.Visitas SET Folio=@Folio WHERE ${visitasPK}=@id`);
+    } catch {}
     res.json({ ok: true, visitaId, folio });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -4315,7 +4323,7 @@ app.put('/api/seguridad/visitas/:id/salida', autenticar, async (req, res) => {
       .input('id',           sql.Int,           Number(req.params.id))
       .input('HoraSalida',   sql.DateTime2,     new Date())
       .input('Observaciones',sql.NVarChar(4000),Observaciones || null)
-      .query('UPDATE Visitas SET HoraSalida=@HoraSalida,Observaciones=@Observaciones WHERE VisitaId=@id');
+      .query(`UPDATE dbo.Visitas SET HoraSalida=@HoraSalida,Observaciones=@Observaciones WHERE ${visitasPK}=@id`);
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -4512,7 +4520,7 @@ app.delete('/api/seguridad/visitas/:id', autenticar, soloAdminOJefeSeg, async (r
     if (!ensurePool(res)) return;
     await pool.request()
       .input('id', sql.Int, Number(req.params.id))
-      .query('DELETE FROM Visitas WHERE VisitaId=@id');
+      .query(`DELETE FROM dbo.Visitas WHERE ${visitasPK}=@id`);
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -4667,16 +4675,17 @@ app.post('/api/public/registrar-visita', async (req, res) => {
       .input('AQuienVisita',    sql.NVarChar(300), d.AQuienVisita    || null)
       .input('Motivo',          sql.NVarChar(500), d.Motivo          || null)
       .input('HoraEntrada',     sql.DateTime2,     new Date())
-      .input('Guardia',         sql.NVarChar(200), 'Autoregistro')
-      .query(`INSERT INTO dbo.Visitas (NombreVisitante,Empresa,Documento,TipoVisita,AQuienVisita,Motivo,HoraEntrada,Guardia)
-              VALUES (@NombreVisitante,@Empresa,@Documento,@TipoVisita,@AQuienVisita,@Motivo,@HoraEntrada,@Guardia);
+      .query(`INSERT INTO dbo.Visitas (NombreVisitante,Empresa,Documento,TipoVisita,AQuienVisita,Motivo,HoraEntrada)
+              VALUES (@NombreVisitante,@Empresa,@Documento,@TipoVisita,@AQuienVisita,@Motivo,@HoraEntrada);
               SELECT SCOPE_IDENTITY() AS id`);
     const visitaId = r.recordset[0].id;
     const folio    = generateSegFolio('VIS', visitaId);
-    await pool.request()
-      .input('Folio',    sql.NVarChar(50), folio)
-      .input('id',       sql.Int,          visitaId)
-      .query('UPDATE dbo.Visitas SET Folio=@Folio WHERE VisitaId=@id');
+    try {
+      await pool.request()
+        .input('Folio', sql.NVarChar(50), folio)
+        .input('id',    sql.Int,          visitaId)
+        .query(`UPDATE dbo.Visitas SET Folio=@Folio WHERE ${visitasPK}=@id`);
+    } catch {}
     res.json({ ok: true, folio });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
