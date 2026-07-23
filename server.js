@@ -3707,6 +3707,50 @@ app.put('/api/ordenes-mantenimiento/:id', autenticar, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+app.patch('/api/ordenes-mantenimiento/:id', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    if (!['admin', 'jefe_mantenimiento'].includes(req.usuario.rol))
+      return res.status(403).json({ error: 'Sin permiso' });
+    const id = Number(req.params.id);
+    const d = req.body;
+    await pool.request()
+      .input('id',                sql.Int,              id)
+      .input('Departamento',      sql.NVarChar(200),    d.Departamento      ?? null)
+      .input('FechaReporte',      sql.Date,             d.FechaReporte      ?? null)
+      .input('NombreSolicita',    sql.NVarChar(300),    d.NombreSolicita    ?? null)
+      .input('Puesto',            sql.NVarChar(200),    d.Puesto            ?? null)
+      .input('Equipo',            sql.NVarChar(200),    d.Equipo            ?? null)
+      .input('Codigo',            sql.NVarChar(100),    d.Codigo            ?? null)
+      .input('RazonOrden',        sql.NVarChar(100),    d.RazonOrden        ?? null)
+      .input('DescripcionFalla',  sql.NVarChar(sql.MAX),d.DescripcionFalla  ?? null)
+      .input('Estado',            sql.NVarChar(50),     d.Estado            ?? null)
+      .input('TecnicoResponsable',sql.NVarChar(300),    d.TecnicoResponsable ?? null)
+      .query(`
+        UPDATE OrdenesMantenimiento SET
+          Departamento=@Departamento, FechaReporte=@FechaReporte,
+          NombreSolicita=@NombreSolicita, Puesto=@Puesto,
+          Equipo=@Equipo, Codigo=@Codigo, RazonOrden=@RazonOrden,
+          DescripcionFalla=@DescripcionFalla, Estado=@Estado,
+          TecnicoResponsable=@TecnicoResponsable
+        WHERE OrdenMantenimientoId=@id
+      `);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/ordenes-mantenimiento/:id', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    if (req.usuario.rol !== 'admin')
+      return res.status(403).json({ error: 'Solo admins pueden eliminar órdenes' });
+    const id = Number(req.params.id);
+    await pool.request().input('id', sql.Int, id)
+      .query('UPDATE OrdenesMantenimiento SET Activo=0 WHERE OrdenMantenimientoId=@id');
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ── Inventario ────────────────────────────────────────────────────────────────
 app.get('/api/inventario', autenticar, async (req, res) => {
   try {
