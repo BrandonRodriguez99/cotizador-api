@@ -2219,16 +2219,26 @@ app.post("/api/cotizaciones/:id/aprobar", autenticar, async (req, res) => {
 // ─── ORDENES DE COMPRA ────────────────────────────────────────────────────────
 app.get("/api/ordenescompra", autenticar, async (req, res) => {
   try {
-    const soloMias = !['admin', 'autorizador1', 'autorizador2', 'jefe_mantenimiento'].includes(req.usuario.rol);
+    const isAdminView = ['admin', 'autorizador1', 'autorizador2'].includes(req.usuario.rol);
+    const isJefeView  = req.usuario.rol === 'jefe_mantenimiento';
     const reqOrd = pool.request();
-    if (soloMias) reqOrd.input("nombre", sql.NVarChar(150), req.usuario.nombre);
+    let whereExtra = '';
+    if (isAdminView) {
+      // ve todo
+    } else if (isJefeView) {
+      // ve solo las OCs creadas por cualquier jefe_mantenimiento
+      whereExtra = "AND oc.Creador IN (SELECT Nombre FROM Usuarios WHERE Rol = 'jefe_mantenimiento' AND Activo = 1)";
+    } else {
+      reqOrd.input("nombre", sql.NVarChar(150), req.usuario.nombre);
+      whereExtra = "AND oc.Creador = @nombre";
+    }
     const [ordResult, aprobResult] = await Promise.all([
       reqOrd.query(`
         SELECT oc.*, u.Nombre AS UnidadNegocio, p.Nombre AS Proveedor
         FROM OrdenesCompra oc
         INNER JOIN UnidadesNegocio u ON oc.UnidadNegocioId = u.UnidadNegocioId
         INNER JOIN Proveedores p ON oc.ProveedorId = p.ProveedorId
-        WHERE oc.Activo = 1 ${soloMias ? "AND oc.Creador = @nombre" : ""}
+        WHERE oc.Activo = 1 ${whereExtra}
         ORDER BY oc.Fecha DESC, oc.OrdenCompraId DESC
       `),
       pool.request().query(`
