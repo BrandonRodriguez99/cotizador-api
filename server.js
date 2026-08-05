@@ -2219,7 +2219,7 @@ app.post("/api/cotizaciones/:id/aprobar", autenticar, async (req, res) => {
 // ─── ORDENES DE COMPRA ────────────────────────────────────────────────────────
 app.get("/api/ordenescompra", autenticar, async (req, res) => {
   try {
-    const soloMias = !['admin', 'autorizador1', 'autorizador2'].includes(req.usuario.rol);
+    const soloMias = !['admin', 'autorizador1', 'autorizador2', 'jefe_mantenimiento'].includes(req.usuario.rol);
     const reqOrd = pool.request();
     if (soloMias) reqOrd.input("nombre", sql.NVarChar(150), req.usuario.nombre);
     const [ordResult, aprobResult] = await Promise.all([
