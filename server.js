@@ -2304,18 +2304,10 @@ app.post("/api/ordenescompra", async (req, res) => {
 app.put("/api/ordenescompra/:id", autenticar, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
-    if (!['admin', 'jefe_mantenimiento'].includes(req.usuario.rol))
+    if (req.usuario.rol !== 'admin')
       return res.status(403).json({ error: 'Sin permisos para editar órdenes de compra' });
 
     const orderId = Number(req.params.id);
-
-    // Bloquear edición si ya fue aprobada por Administración (Paso 1), excepto admin
-    if (req.usuario.rol !== 'admin') {
-      const aprobCheck = await pool.request().input('id', sql.Int, orderId)
-        .query(`SELECT TOP 1 1 FROM OrdenesCompraAprobaciones WHERE OrdenCompraId=@id AND Paso=1 AND Aprobado=1`);
-      if (aprobCheck.recordset.length)
-        return res.status(403).json({ error: 'Esta orden ya fue aprobada por Administración y no puede modificarse.' });
-    }
     const { ProveedorId, UnidadNegocioId, Tipo, Destino, Observaciones, ConIva, Total, Subtotal, Iva, LineItems, Proveedor } = req.body;
 
     const transaction = new sql.Transaction(pool);
@@ -2999,7 +2991,7 @@ app.get("/api/ordenescompra/:id/pdf", async (req, res) => {
     });
     y += 20;
 
-    aprobs.forEach((a) => {
+    aprobs.filter((a) => a.Paso === 1).forEach((a) => {
       const aprobado = Boolean(a.Aprobado);
       const bg = order.Rechazado && !aprobado ? "#fee2e2" : aprobado ? "#f0fdf4" : "#fffbeb";
       const estadoTxt   = order.Rechazado && !aprobado ? "Rechazado" : aprobado ? "Aprobado" : "Pendiente";
@@ -3021,13 +3013,11 @@ app.get("/api/ordenescompra/:id/pdf", async (req, res) => {
 
     // ── FIRMAS ──────────────────────────────────────────────────────────────
     y += 20;
-    const FW = CW / 3;
+    const FW = CW / 2;
     const aprobacion1 = aprobs.find((a) => a.Paso === 1);
-    const aprobacion2 = aprobs.find((a) => a.Paso === 2);
     [
-      { rol: "SOLICITA", nombre: order.Creador || "",           cargo: "Solicitante"       },
-      { rol: "AUTORIZA", nombre: aprobacion1?.AprobadoPor || "", cargo: "Administracion"   },
-      { rol: "AUTORIZA", nombre: aprobacion2?.AprobadoPor || "", cargo: "Sec. Academica"   },
+      { rol: "SOLICITA", nombre: order.Creador || "",            cargo: "Solicitante"     },
+      { rol: "AUTORIZA", nombre: aprobacion1?.AprobadoPor || "", cargo: "Administracion"  },
     ].forEach((f, i) => {
       const fx = ML + FW * i;
       doc.save().rect(fx + 6, y, FW - 12, 70).lineWidth(0.4).stroke("#cccccc").restore();
@@ -3095,10 +3085,13 @@ app.post("/api/ordenescompra/:id/factura/archivo", autenticar, async (req, res) 
   try {
     if (!ensurePool(res)) return;
     const orderId = Number(req.params.id);
+    const slot = Number(req.query.slot) || 1;
     const { archivoBase64, archivoNombre } = req.body;
     if (!archivoBase64 || !archivoNombre)
       return res.status(400).json({ error: "archivoBase64 y archivoNombre requeridos" });
 
+    const nameCol    = slot === 3 ? "Archivo3Nombre"    : slot === 2 ? "Archivo2Nombre"    : "ArchivoNombre";
+    const contentCol = slot === 3 ? "Archivo3Contenido" : slot === 2 ? "Archivo2Contenido" : "ArchivoContenido";
     const base64Data = archivoBase64.replace(/^data:[^;]+;base64,/, "");
     const buffer = Buffer.from(base64Data, "base64");
 
@@ -3106,9 +3099,7 @@ app.post("/api/ordenescompra/:id/factura/archivo", autenticar, async (req, res) 
       .input("id", sql.Int, orderId)
       .input("nombre", sql.NVarChar(500), archivoNombre)
       .input("contenido", sql.VarBinary(sql.MAX), buffer)
-      .query(`UPDATE dbo.OrdenesCompraFacturas
-              SET ArchivoNombre=@nombre, ArchivoContenido=@contenido
-              WHERE OrdenCompraId=@id`);
+      .query(`UPDATE dbo.OrdenesCompraFacturas SET ${nameCol}=@nombre, ${contentCol}=@contenido WHERE OrdenCompraId=@id`);
 
     res.json({ ok: true, archivoNombre });
   } catch (err) {
@@ -3121,9 +3112,13 @@ app.post("/api/ordenescompra/:id/factura/archivo", autenticar, async (req, res) 
 app.get("/api/ordenescompra/:id/factura/archivo", autenticar, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
+    const slot = Number(req.query.slot) || 1;
+    const nameCol    = slot === 3 ? "Archivo3Nombre"    : slot === 2 ? "Archivo2Nombre"    : "ArchivoNombre";
+    const contentCol = slot === 3 ? "Archivo3Contenido" : slot === 2 ? "Archivo2Contenido" : "ArchivoContenido";
+
     const r = await pool.request()
       .input("id", sql.Int, Number(req.params.id))
-      .query("SELECT ArchivoNombre, ArchivoContenido FROM dbo.OrdenesCompraFacturas WHERE OrdenCompraId=@id");
+      .query(`SELECT ${nameCol} AS ArchivoNombre, ${contentCol} AS ArchivoContenido FROM dbo.OrdenesCompraFacturas WHERE OrdenCompraId=@id`);
     const row = r.recordset[0];
     if (!row?.ArchivoContenido) return res.status(404).json({ error: "No hay archivo adjunto" });
 
