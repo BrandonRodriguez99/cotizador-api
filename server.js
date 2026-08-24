@@ -2308,6 +2308,14 @@ app.put("/api/ordenescompra/:id", autenticar, async (req, res) => {
       return res.status(403).json({ error: 'Sin permisos para editar órdenes de compra' });
 
     const orderId = Number(req.params.id);
+
+    // Bloquear edición si ya fue aprobada por Administración (Paso 1), excepto admin
+    if (req.usuario.rol !== 'admin') {
+      const aprobCheck = await pool.request().input('id', sql.Int, orderId)
+        .query(`SELECT TOP 1 1 FROM OrdenesCompraAprobaciones WHERE OrdenCompraId=@id AND Paso=1 AND Aprobado=1`);
+      if (aprobCheck.recordset.length)
+        return res.status(403).json({ error: 'Esta orden ya fue aprobada por Administración y no puede modificarse.' });
+    }
     const { ProveedorId, UnidadNegocioId, Tipo, Destino, Observaciones, ConIva, Total, Subtotal, Iva, LineItems, Proveedor } = req.body;
 
     const transaction = new sql.Transaction(pool);
