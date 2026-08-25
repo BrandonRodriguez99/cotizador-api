@@ -4849,6 +4849,311 @@ app.get('/api/reportes/evaluaciones', autenticar, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ─── MÓDULO PROVEEDORES — REGISTRO CON FLUJO DE AUTORIZACIÓN ─────────────────
+const SP_ROLES_AUTH = ['admin', 'autorizador1'];
+
+function spBody(b) {
+  return {
+    FechaRegistro:   b.FechaRegistro   || null,
+    CondicionesPago: b.CondicionesPago || null,
+    RazonSocial:     b.RazonSocial     || null,
+    RFC:             b.RFC             || null,
+    Calle:           b.Calle           || null,
+    Colonia:         b.Colonia         || null,
+    Ciudad:          b.Ciudad          || null,
+    EstadoDir:       b.EstadoDir       || null,
+    CodigoPostal:    b.CodigoPostal    || null,
+    ProductoServicio:b.ProductoServicio|| null,
+    TipoPersona:     b.TipoPersona     || 'moral',
+    GerenteNombre:   b.GerenteNombre   || null,
+    GerenteTelefono: b.GerenteTelefono || null,
+    GerenteFax:      b.GerenteFax      || null,
+    GerenteEmail:    b.GerenteEmail    || null,
+    CxCNombre:       b.CxCNombre       || null,
+    CxCTelefono:     b.CxCTelefono     || null,
+    CxCFax:          b.CxCFax          || null,
+    CxCEmail:        b.CxCEmail        || null,
+    Banco:           b.Banco           || null,
+    Clabe:           b.Clabe           || null,
+    NoCuenta:        b.NoCuenta        || null,
+    Moneda:          b.Moneda          || null,
+    Referencia:      b.Referencia      || null,
+  };
+}
+
+// Listar solicitudes
+app.get('/api/solicitudes-proveedor', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const esAuth = SP_ROLES_AUTH.includes(req.usuario.rol);
+    let query = `SELECT SolicitudId, Estado, CreadoPor, FechaCreacion, AprobadoPor,
+                        FechaResolucion, RazonSocial, RFC, TipoPersona, ProveedorId
+                 FROM dbo.SolicitudesProveedor`;
+    if (!esAuth) query += ` WHERE CreadoPor = @nombre`;
+    query += ' ORDER BY SolicitudId DESC';
+    const r = pool.request();
+    if (!esAuth) r.input('nombre', sql.NVarChar(150), req.usuario.nombre);
+    const result = await r.query(query);
+    res.json(result.recordset);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Crear solicitud (borrador)
+app.post('/api/solicitudes-proveedor', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const d = spBody(req.body);
+    const r = await pool.request()
+      .input('creadoPor', sql.NVarChar(150), req.usuario.nombre)
+      .input('FechaRegistro',    sql.Date,          d.FechaRegistro ? new Date(d.FechaRegistro) : null)
+      .input('CondicionesPago',  sql.NVarChar(200),  d.CondicionesPago)
+      .input('RazonSocial',      sql.NVarChar(300),  d.RazonSocial)
+      .input('RFC',              sql.NVarChar(20),   d.RFC)
+      .input('Calle',            sql.NVarChar(300),  d.Calle)
+      .input('Colonia',          sql.NVarChar(200),  d.Colonia)
+      .input('Ciudad',           sql.NVarChar(100),  d.Ciudad)
+      .input('EstadoDir',        sql.NVarChar(100),  d.EstadoDir)
+      .input('CodigoPostal',     sql.NVarChar(10),   d.CodigoPostal)
+      .input('ProductoServicio', sql.NVarChar(500),  d.ProductoServicio)
+      .input('TipoPersona',      sql.NVarChar(10),   d.TipoPersona)
+      .input('GerenteNombre',    sql.NVarChar(200),  d.GerenteNombre)
+      .input('GerenteTelefono',  sql.NVarChar(50),   d.GerenteTelefono)
+      .input('GerenteFax',       sql.NVarChar(50),   d.GerenteFax)
+      .input('GerenteEmail',     sql.NVarChar(200),  d.GerenteEmail)
+      .input('CxCNombre',        sql.NVarChar(200),  d.CxCNombre)
+      .input('CxCTelefono',      sql.NVarChar(50),   d.CxCTelefono)
+      .input('CxCFax',           sql.NVarChar(50),   d.CxCFax)
+      .input('CxCEmail',         sql.NVarChar(200),  d.CxCEmail)
+      .input('Banco',            sql.NVarChar(200),  d.Banco)
+      .input('Clabe',            sql.NVarChar(50),   d.Clabe)
+      .input('NoCuenta',         sql.NVarChar(50),   d.NoCuenta)
+      .input('Moneda',           sql.NVarChar(20),   d.Moneda)
+      .input('Referencia',       sql.NVarChar(200),  d.Referencia)
+      .query(`INSERT INTO dbo.SolicitudesProveedor
+        (Estado,CreadoPor,FechaRegistro,CondicionesPago,RazonSocial,RFC,Calle,Colonia,Ciudad,EstadoDir,CodigoPostal,
+         ProductoServicio,TipoPersona,GerenteNombre,GerenteTelefono,GerenteFax,GerenteEmail,
+         CxCNombre,CxCTelefono,CxCFax,CxCEmail,Banco,Clabe,NoCuenta,Moneda,Referencia)
+        OUTPUT inserted.SolicitudId
+        VALUES('borrador',@creadoPor,@FechaRegistro,@CondicionesPago,@RazonSocial,@RFC,@Calle,@Colonia,@Ciudad,@EstadoDir,@CodigoPostal,
+               @ProductoServicio,@TipoPersona,@GerenteNombre,@GerenteTelefono,@GerenteFax,@GerenteEmail,
+               @CxCNombre,@CxCTelefono,@CxCFax,@CxCEmail,@Banco,@Clabe,@NoCuenta,@Moneda,@Referencia)`);
+    res.json({ solicitudId: r.recordset[0].SolicitudId });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Obtener una solicitud con docs
+app.get('/api/solicitudes-proveedor/:id', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const id = Number(req.params.id);
+    const [sp, docs] = await Promise.all([
+      pool.request().input('id', sql.Int, id)
+        .query('SELECT * FROM dbo.SolicitudesProveedor WHERE SolicitudId=@id'),
+      pool.request().input('id', sql.Int, id)
+        .query('SELECT DocumentoId,TipoDocumento,Nombre,FechaSubida FROM dbo.SolicitudesProveedorDocumentos WHERE SolicitudId=@id ORDER BY DocumentoId'),
+    ]);
+    if (!sp.recordset.length) return res.status(404).json({ error: 'No encontrada' });
+    const row = sp.recordset[0];
+    const esAuth = SP_ROLES_AUTH.includes(req.usuario.rol);
+    if (!esAuth && row.CreadoPor !== req.usuario.nombre)
+      return res.status(403).json({ error: 'Sin permisos' });
+    res.json({ ...row, documentos: docs.recordset });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Actualizar solicitud (solo borrador y solo el creador)
+app.put('/api/solicitudes-proveedor/:id', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const id = Number(req.params.id);
+    const check = await pool.request().input('id', sql.Int, id)
+      .query('SELECT Estado, CreadoPor FROM dbo.SolicitudesProveedor WHERE SolicitudId=@id');
+    if (!check.recordset.length) return res.status(404).json({ error: 'No encontrada' });
+    const row = check.recordset[0];
+    const esAuth = SP_ROLES_AUTH.includes(req.usuario.rol);
+    if (!esAuth && row.CreadoPor !== req.usuario.nombre) return res.status(403).json({ error: 'Sin permisos' });
+    if (row.Estado !== 'borrador') return res.status(400).json({ error: 'Solo se puede editar en estado borrador' });
+    const d = spBody(req.body);
+    await pool.request()
+      .input('id', sql.Int, id)
+      .input('FechaRegistro',    sql.Date,          d.FechaRegistro ? new Date(d.FechaRegistro) : null)
+      .input('CondicionesPago',  sql.NVarChar(200),  d.CondicionesPago)
+      .input('RazonSocial',      sql.NVarChar(300),  d.RazonSocial)
+      .input('RFC',              sql.NVarChar(20),   d.RFC)
+      .input('Calle',            sql.NVarChar(300),  d.Calle)
+      .input('Colonia',          sql.NVarChar(200),  d.Colonia)
+      .input('Ciudad',           sql.NVarChar(100),  d.Ciudad)
+      .input('EstadoDir',        sql.NVarChar(100),  d.EstadoDir)
+      .input('CodigoPostal',     sql.NVarChar(10),   d.CodigoPostal)
+      .input('ProductoServicio', sql.NVarChar(500),  d.ProductoServicio)
+      .input('TipoPersona',      sql.NVarChar(10),   d.TipoPersona)
+      .input('GerenteNombre',    sql.NVarChar(200),  d.GerenteNombre)
+      .input('GerenteTelefono',  sql.NVarChar(50),   d.GerenteTelefono)
+      .input('GerenteFax',       sql.NVarChar(50),   d.GerenteFax)
+      .input('GerenteEmail',     sql.NVarChar(200),  d.GerenteEmail)
+      .input('CxCNombre',        sql.NVarChar(200),  d.CxCNombre)
+      .input('CxCTelefono',      sql.NVarChar(50),   d.CxCTelefono)
+      .input('CxCFax',           sql.NVarChar(50),   d.CxCFax)
+      .input('CxCEmail',         sql.NVarChar(200),  d.CxCEmail)
+      .input('Banco',            sql.NVarChar(200),  d.Banco)
+      .input('Clabe',            sql.NVarChar(50),   d.Clabe)
+      .input('NoCuenta',         sql.NVarChar(50),   d.NoCuenta)
+      .input('Moneda',           sql.NVarChar(20),   d.Moneda)
+      .input('Referencia',       sql.NVarChar(200),  d.Referencia)
+      .query(`UPDATE dbo.SolicitudesProveedor SET
+        FechaRegistro=@FechaRegistro,CondicionesPago=@CondicionesPago,RazonSocial=@RazonSocial,RFC=@RFC,
+        Calle=@Calle,Colonia=@Colonia,Ciudad=@Ciudad,EstadoDir=@EstadoDir,CodigoPostal=@CodigoPostal,
+        ProductoServicio=@ProductoServicio,TipoPersona=@TipoPersona,
+        GerenteNombre=@GerenteNombre,GerenteTelefono=@GerenteTelefono,GerenteFax=@GerenteFax,GerenteEmail=@GerenteEmail,
+        CxCNombre=@CxCNombre,CxCTelefono=@CxCTelefono,CxCFax=@CxCFax,CxCEmail=@CxCEmail,
+        Banco=@Banco,Clabe=@Clabe,NoCuenta=@NoCuenta,Moneda=@Moneda,Referencia=@Referencia
+        WHERE SolicitudId=@id`);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Enviar a autorización
+app.post('/api/solicitudes-proveedor/:id/enviar', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const id = Number(req.params.id);
+    const check = await pool.request().input('id', sql.Int, id)
+      .query('SELECT Estado, CreadoPor FROM dbo.SolicitudesProveedor WHERE SolicitudId=@id');
+    if (!check.recordset.length) return res.status(404).json({ error: 'No encontrada' });
+    const row = check.recordset[0];
+    if (row.CreadoPor !== req.usuario.nombre && !SP_ROLES_AUTH.includes(req.usuario.rol))
+      return res.status(403).json({ error: 'Sin permisos' });
+    if (row.Estado !== 'borrador') return res.status(400).json({ error: 'Solo borradores pueden enviarse' });
+    await pool.request().input('id', sql.Int, id)
+      .query("UPDATE dbo.SolicitudesProveedor SET Estado='pendiente' WHERE SolicitudId=@id");
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Aprobar solicitud (crea el proveedor automáticamente)
+app.post('/api/solicitudes-proveedor/:id/aprobar', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    if (!SP_ROLES_AUTH.includes(req.usuario.rol)) return res.status(403).json({ error: 'Sin permisos' });
+    const id = Number(req.params.id);
+    const spRes = await pool.request().input('id', sql.Int, id)
+      .query('SELECT * FROM dbo.SolicitudesProveedor WHERE SolicitudId=@id');
+    if (!spRes.recordset.length) return res.status(404).json({ error: 'No encontrada' });
+    const sp = spRes.recordset[0];
+    if (sp.Estado !== 'pendiente') return res.status(400).json({ error: 'Solo solicitudes pendientes pueden aprobarse' });
+
+    // Crear proveedor en catálogo
+    const prov = await pool.request()
+      .input('nombre',   sql.NVarChar(300), sp.RazonSocial || 'Sin nombre')
+      .input('rfc',      sql.NVarChar(20),  sp.RFC || null)
+      .input('correo',   sql.NVarChar(200), sp.GerenteEmail || null)
+      .input('telefono', sql.NVarChar(50),  sp.GerenteTelefono || null)
+      .input('contacto', sql.NVarChar(200), sp.GerenteNombre || null)
+      .query(`INSERT INTO dbo.Proveedores (Nombre,RFC,Correo,Telefono,Contacto,Activo)
+              OUTPUT inserted.ProveedorId
+              VALUES (@nombre,@rfc,@correo,@telefono,@contacto,1)`);
+    const proveedorId = prov.recordset[0].ProveedorId;
+
+    // Marcar solicitud como aprobada
+    await pool.request()
+      .input('id',          sql.Int,          id)
+      .input('aprobadoPor', sql.NVarChar(150), req.usuario.nombre)
+      .input('proveedorId', sql.Int,           proveedorId)
+      .query(`UPDATE dbo.SolicitudesProveedor
+              SET Estado='aprobado', AprobadoPor=@aprobadoPor,
+                  FechaResolucion=SYSUTCDATETIME(), ProveedorId=@proveedorId
+              WHERE SolicitudId=@id`);
+    res.json({ ok: true, proveedorId });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Rechazar solicitud
+app.post('/api/solicitudes-proveedor/:id/rechazar', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    if (!SP_ROLES_AUTH.includes(req.usuario.rol)) return res.status(403).json({ error: 'Sin permisos' });
+    const id = Number(req.params.id);
+    const { motivo } = req.body;
+    const check = await pool.request().input('id', sql.Int, id)
+      .query("SELECT Estado FROM dbo.SolicitudesProveedor WHERE SolicitudId=@id");
+    if (!check.recordset.length) return res.status(404).json({ error: 'No encontrada' });
+    if (check.recordset[0].Estado !== 'pendiente') return res.status(400).json({ error: 'Solo solicitudes pendientes' });
+    await pool.request()
+      .input('id',          sql.Int,           id)
+      .input('aprobadoPor', sql.NVarChar(150),  req.usuario.nombre)
+      .input('motivo',      sql.NVarChar(1000), motivo || null)
+      .query(`UPDATE dbo.SolicitudesProveedor
+              SET Estado='rechazado', AprobadoPor=@aprobadoPor,
+                  FechaResolucion=SYSUTCDATETIME(), MotivoRechazo=@motivo
+              WHERE SolicitudId=@id`);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Subir documento
+app.post('/api/solicitudes-proveedor/:id/documentos', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const id = Number(req.params.id);
+    const { tipoDocumento, archivoBase64, archivoNombre } = req.body;
+    if (!archivoBase64 || !archivoNombre) return res.status(400).json({ error: 'Falta archivo' });
+    const check = await pool.request().input('id', sql.Int, id)
+      .query('SELECT CreadoPor FROM dbo.SolicitudesProveedor WHERE SolicitudId=@id');
+    if (!check.recordset.length) return res.status(404).json({ error: 'No encontrada' });
+    const esAuth = SP_ROLES_AUTH.includes(req.usuario.rol);
+    if (!esAuth && check.recordset[0].CreadoPor !== req.usuario.nombre) return res.status(403).json({ error: 'Sin permisos' });
+    const base64Data = archivoBase64.replace(/^data:[^;]+;base64,/, '');
+    const buffer = Buffer.from(base64Data, 'base64');
+    // Reemplazar si ya existe el mismo tipo
+    const existing = await pool.request()
+      .input('id', sql.Int, id).input('tipo', sql.NVarChar(100), tipoDocumento || null)
+      .query('SELECT DocumentoId FROM dbo.SolicitudesProveedorDocumentos WHERE SolicitudId=@id AND TipoDocumento=@tipo');
+    if (existing.recordset.length) {
+      await pool.request()
+        .input('docId',    sql.Int,          existing.recordset[0].DocumentoId)
+        .input('nombre',   sql.NVarChar(500), archivoNombre)
+        .input('contenido',sql.VarBinary(sql.MAX), buffer)
+        .query('UPDATE dbo.SolicitudesProveedorDocumentos SET Nombre=@nombre,Contenido=@contenido,FechaSubida=SYSUTCDATETIME() WHERE DocumentoId=@docId');
+      return res.json({ ok: true, documentoId: existing.recordset[0].DocumentoId });
+    }
+    const ins = await pool.request()
+      .input('id',     sql.Int,          id)
+      .input('tipo',   sql.NVarChar(100), tipoDocumento || null)
+      .input('nombre', sql.NVarChar(500), archivoNombre)
+      .input('contenido', sql.VarBinary(sql.MAX), buffer)
+      .query(`INSERT INTO dbo.SolicitudesProveedorDocumentos (SolicitudId,TipoDocumento,Nombre,Contenido)
+              OUTPUT inserted.DocumentoId VALUES (@id,@tipo,@nombre,@contenido)`);
+    res.json({ ok: true, documentoId: ins.recordset[0].DocumentoId });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Descargar documento
+app.get('/api/solicitudes-proveedor/:id/documentos/:docId', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const docId = Number(req.params.docId);
+    const r = await pool.request().input('docId', sql.Int, docId)
+      .query('SELECT Nombre, Contenido FROM dbo.SolicitudesProveedorDocumentos WHERE DocumentoId=@docId');
+    const row = r.recordset[0];
+    if (!row?.Contenido) return res.status(404).json({ error: 'No encontrado' });
+    const ext = path.extname(row.Nombre || '').toLowerCase();
+    const mimeMap = { '.pdf':'application/pdf','.xml':'application/xml','.jpg':'image/jpeg','.jpeg':'image/jpeg','.png':'image/png' };
+    res.setHeader('Content-Type', mimeMap[ext] || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(row.Nombre || 'documento')}"`);
+    res.send(row.Contenido);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Eliminar documento
+app.delete('/api/solicitudes-proveedor/:id/documentos/:docId', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    await pool.request().input('docId', sql.Int, Number(req.params.docId))
+      .query('DELETE FROM dbo.SolicitudesProveedorDocumentos WHERE DocumentoId=@docId');
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ─── SERVER ───────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => console.log(`🚀 Servidor corriendo en puerto ${PORT}`));
