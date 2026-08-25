@@ -2801,8 +2801,8 @@ const PDFDocument = require("pdfkit");
 
 // Constantes institucionales del documento
 const PDF_DOC_NO    = "FGA01-03";
-const PDF_DOC_REV   = "1";
-const PDF_DOC_FECHA = "21-Ene-2021";
+const PDF_DOC_REV   = "2";
+const PDF_DOC_FECHA = "10-Ago-2026";
 const PDF_EMPRESA   = "UNIVERSIDAD DE AUTOTRANSPORTE SC";
 const PDF_DIRECCION = "CARRETERA A COLOMBIA 2080, COL. ANDRES CABALLERO MORENO AGROP, ESCOBEDO, N.L. CP 66080";
 const PDF_LOGO_PATH = path.join(__dirname, "..", "imagenes", "UDAT_Wordmark-04.png");
@@ -3283,7 +3283,7 @@ app.get("/api/ordenescompra/:id/solicitud-fondos/pdf", autenticar, async (req, r
     pdfCell(doc, ML+LOGO_W, y, TITLE_W, HDR_H/2, { fill:"#ffffff", text: PDF_EMPRESA, size:9.5, bold:true, align:"center" });
     pdfCell(doc, ML+LOGO_W, y+HDR_H/2, TITLE_W, HDR_H/2, { fill:"#dbeafe", text:"SOLICITUD DE FONDOS", size:11, bold:true, align:"center", color:"#1e40af" });
     const MX = ML+LOGO_W+TITLE_W, MH = HDR_H/3;
-    [["FGA01-04","No."],["2","Rev."],["21-Ene-2021","Fecha"]].forEach(([v,l],i)=>{
+    [["FGA01-04","No."],["1","Rev."],["10-Ago-2026","Fecha"]].forEach(([v,l],i)=>{
       pdfCell(doc,MX,y+MH*i,META_W,MH,{fill:"#f3f4f6"});
       doc.font("Helvetica").fontSize(7.5).fillColor("#6b7280").text(l,MX+5,y+MH*i+MH/2-4.5,{width:34,lineBreak:false});
       doc.font("Helvetica-Bold").fontSize(7.5).fillColor("#111827").text(v,MX+41,y+MH*i+MH/2-4.5,{width:META_W-46,lineBreak:false});
