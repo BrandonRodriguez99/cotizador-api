@@ -4730,6 +4730,125 @@ app.get('/api/debug/schema/:tabla', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ─── REPORTES ────────────────────────────────────────────────────────────────
+function parseDateFilter(val) { return val ? new Date(val) : null; }
+
+app.get('/api/reportes/ordenes-compra', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    if (!['admin','autorizador1','autorizador2'].includes(req.usuario.rol))
+      return res.status(403).json({ error: 'Sin permisos' });
+
+    const { desde, hasta } = req.query;
+    const r = await pool.request()
+      .input('desde', sql.Date, parseDateFilter(desde))
+      .input('hasta', sql.Date, parseDateFilter(hasta))
+      .query(`
+        SELECT
+          oc.Folio,
+          p.Nombre  AS Proveedor,
+          oc.Tipo,
+          un.Nombre AS UnidadNegocio,
+          oc.Destino,
+          oc.Creador,
+          CONVERT(varchar(10), oc.Fecha, 23) AS Fecha,
+          oc.Subtotal,
+          oc.Iva,
+          oc.Total,
+          CASE
+            WHEN oc.Rechazado=1 THEN 'Rechazada'
+            WHEN (SELECT COUNT(*) FROM OrdenesCompraAprobaciones a WHERE a.OrdenCompraId=oc.OrdenCompraId AND a.Aprobado=1)
+               = (SELECT COUNT(*) FROM OrdenesCompraAprobaciones a WHERE a.OrdenCompraId=oc.OrdenCompraId)
+               AND (SELECT COUNT(*) FROM OrdenesCompraAprobaciones a WHERE a.OrdenCompraId=oc.OrdenCompraId) > 0
+              THEN 'Aprobada'
+            WHEN (SELECT COUNT(*) FROM OrdenesCompraAprobaciones a WHERE a.OrdenCompraId=oc.OrdenCompraId AND a.Aprobado=1) > 0
+              THEN 'En proceso'
+            ELSE 'Pendiente'
+          END AS Estado,
+          oc.Observaciones
+        FROM OrdenesCompra oc
+        INNER JOIN Proveedores p ON oc.ProveedorId=p.ProveedorId
+        INNER JOIN UnidadesNegocio un ON oc.UnidadNegocioId=un.UnidadNegocioId
+        WHERE oc.Activo=1
+          AND (@desde IS NULL OR CAST(oc.Fecha AS date) >= @desde)
+          AND (@hasta IS NULL OR CAST(oc.Fecha AS date) <= @hasta)
+        ORDER BY oc.OrdenCompraId DESC
+      `);
+    res.json(r.recordset);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/reportes/solicitudes-fondos', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    if (!['admin','autorizador1','autorizador2'].includes(req.usuario.rol))
+      return res.status(403).json({ error: 'Sin permisos' });
+
+    const { desde, hasta } = req.query;
+    const r = await pool.request()
+      .input('desde', sql.Date, parseDateFilter(desde))
+      .input('hasta', sql.Date, parseDateFilter(hasta))
+      .query(`
+        SELECT
+          sf.Folio,
+          oc.Folio  AS FolioOC,
+          p.Nombre  AS Proveedor,
+          sf.Monto,
+          sf.Concepto,
+          sf.FormaPago,
+          sf.Moneda,
+          sf.EntregarA,
+          sf.CreadoPor,
+          CONVERT(varchar(10), sf.FechaCreacion, 23) AS FechaCreacion,
+          sf.Estado,
+          sf.AprobadoPor1,
+          CONVERT(varchar(10), sf.FechaAprobacion1, 23) AS FechaAprobacion1
+        FROM SolicitudesFondos sf
+        INNER JOIN OrdenesCompra oc ON sf.OrdenCompraId=oc.OrdenCompraId
+        INNER JOIN Proveedores p ON oc.ProveedorId=p.ProveedorId
+        WHERE (@desde IS NULL OR CAST(sf.FechaCreacion AS date) >= @desde)
+          AND (@hasta IS NULL OR CAST(sf.FechaCreacion AS date) <= @hasta)
+        ORDER BY sf.SolicitudId DESC
+      `);
+    res.json(r.recordset);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/reportes/evaluaciones', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    if (!['admin','autorizador1','autorizador2'].includes(req.usuario.rol))
+      return res.status(403).json({ error: 'Sin permisos' });
+
+    const { desde, hasta } = req.query;
+    const r = await pool.request()
+      .input('desde', sql.Date, parseDateFilter(desde))
+      .input('hasta', sql.Date, parseDateFilter(hasta))
+      .query(`
+        SELECT
+          oc.Folio  AS FolioOC,
+          p.Nombre  AS Proveedor,
+          ev.Tipo,
+          ev.Departamento,
+          ev.PuntajeCalidad,
+          ev.PuntajeTiempos,
+          ev.PuntajeCantidad,
+          ev.PuntajePosventa,
+          ev.PuntajeTotal,
+          ev.Observaciones,
+          ev.Evaluador,
+          CONVERT(varchar(10), ev.FechaEvaluacion, 23) AS FechaEvaluacion
+        FROM EvaluacionesProveedor ev
+        INNER JOIN OrdenesCompra oc ON ev.OrdenCompraId=oc.OrdenCompraId
+        INNER JOIN Proveedores p ON oc.ProveedorId=p.ProveedorId
+        WHERE (@desde IS NULL OR CAST(ev.FechaEvaluacion AS date) >= @desde)
+          AND (@hasta IS NULL OR CAST(ev.FechaEvaluacion AS date) <= @hasta)
+        ORDER BY ev.EvaluacionId DESC
+      `);
+    res.json(r.recordset);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ─── SERVER ───────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => console.log(`🚀 Servidor corriendo en puerto ${PORT}`));
