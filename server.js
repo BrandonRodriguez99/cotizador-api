@@ -5202,6 +5202,87 @@ app.delete('/api/solicitudes-proveedor/:id/documentos/:docId', autenticar, async
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ─── Generaciones (UDAT) ──────────────────────────────────────────────────────
+app.get('/api/generaciones', autenticar, async (req, res) => {
+  try {
+    if (!poolUDAT) return res.status(500).json({ error: 'Sin conexión a UDAT' });
+    const result = await poolUDAT.request().query(`
+      SELECT GeneracionId, Nombre
+      FROM dbo.Generacion
+      ORDER BY Nombre DESC
+    `);
+    res.json(result.recordset);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ─── Asistencia por generación ────────────────────────────────────────────────
+app.get('/api/asistencia', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    if (!poolUDAT) return res.status(500).json({ error: 'Sin conexión a UDAT' });
+
+    const { generacionId, fecha } = req.query;
+    if (!generacionId) return res.status(400).json({ error: 'generacionId requerido' });
+    const fechaDia = fecha || new Date().toISOString().substring(0, 10);
+
+    // 1. Todos los alumnos de la generación desde UDAT
+    const alumnosRes = await poolUDAT.request()
+      .input('genId', sql.Int, Number(generacionId))
+      .query(`
+        WITH AplicacionUnica AS (
+          SELECT a.OperadorId,
+            ROW_NUMBER() OVER (PARTITION BY a.OperadorId ORDER BY a.FechaAplicacion DESC) AS rn
+          FROM dbo.Aplicacion a
+          WHERE a.Eliminado = 0 AND a.GeneracionId = @genId
+        )
+        SELECT
+          op.OperadorId,
+          op.Matricula,
+          LTRIM(RTRIM(
+            ISNULL(op.Nombre,'') + ' ' + ISNULL(op.ApellidoPaterno,'') + ' ' + ISNULL(op.ApellidoMaterno,'')
+          )) AS Nombre
+        FROM dbo.Operador op
+        INNER JOIN AplicacionUnica au ON op.OperadorId = au.OperadorId AND au.rn = 1
+        WHERE (op.Eliminado = 0 OR op.Eliminado IS NULL)
+        ORDER BY op.ApellidoPaterno, op.Nombre
+      `);
+
+    // 2. Registros de acceso del día desde biUDAT
+    const accesosRes = await pool.request()
+      .input('fecha', sql.Date, fechaDia)
+      .query(`
+        SELECT Matricula, TipoAcceso, FechaHora
+        FROM dbo.RegistroAccesoAlumnos
+        WHERE CAST(FechaHora AS DATE) = @fecha
+        ORDER BY FechaHora ASC
+      `);
+
+    // 3. Merge: por cada alumno buscar su primer Entrada y última Salida
+    const accesosMap = {};
+    for (const r of accesosRes.recordset) {
+      const m = (r.Matricula || '').trim();
+      if (!accesosMap[m]) accesosMap[m] = { entradas: [], salidas: [] };
+      if (r.TipoAcceso === 'Entrada') accesosMap[m].entradas.push(r.FechaHora);
+      if (r.TipoAcceso === 'Salida')  accesosMap[m].salidas.push(r.FechaHora);
+    }
+
+    const alumnos = alumnosRes.recordset.map(a => {
+      const m = (a.Matricula || '').trim();
+      const acc = accesosMap[m];
+      return {
+        OperadorId:   a.OperadorId,
+        Matricula:    a.Matricula,
+        Nombre:       a.Nombre,
+        Presente:     !!(acc && acc.entradas.length > 0),
+        HoraEntrada:  acc && acc.entradas.length  ? acc.entradas[0]  : null,
+        HoraSalida:   acc && acc.salidas.length   ? acc.salidas[acc.salidas.length - 1] : null,
+      };
+    });
+
+    res.json({ fecha: fechaDia, alumnos });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ─── Acceso Alumnos QR ────────────────────────────────────────────────────────
 app.get('/api/acceso-alumnos', autenticar, async (req, res) => {
   try {
