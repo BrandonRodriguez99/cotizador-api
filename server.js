@@ -44,18 +44,17 @@ const config = {
   },
 };
 
-// CONFIG SQL — base UDAT (para consulta de Operadores/alumnos)
-const configUDAT = {
+// POOL secundario — base UDAT (para consulta de Operadores/alumnos)
+let poolUDAT;
+const _cpUDAT = new sql.ConnectionPool({
   user:     process.env.UDAT_DB_USER     || "tandita",
   password: process.env.UDAT_DB_PASSWORD || "tandita#2023$#",
   server:   process.env.UDAT_DB_SERVER   || "udatserver.southcentralus.cloudapp.azure.com",
   database: process.env.UDAT_DB_NAME     || "UDAT",
   port:     Number(process.env.DB_PORT)  || 1433,
-  options: { encrypt: false, trustServerCertificate: true },
-};
-
-let poolUDAT;
-sql.connect(configUDAT)
+  options:  { encrypt: false, trustServerCertificate: true },
+});
+_cpUDAT.connect()
   .then(p => { poolUDAT = p; console.log('✅ Conectado a UDAT'); })
   .catch(e => console.log('❌ Error UDAT:', e.message));
 
