@@ -44,6 +44,21 @@ const config = {
   },
 };
 
+// CONFIG SQL — base UDAT (para consulta de Operadores/alumnos)
+const configUDAT = {
+  user:     process.env.UDAT_DB_USER     || "tandita",
+  password: process.env.UDAT_DB_PASSWORD || "tandita#2023$#",
+  server:   process.env.UDAT_DB_SERVER   || "udatserver.southcentralus.cloudapp.azure.com",
+  database: process.env.UDAT_DB_NAME     || "UDAT",
+  port:     Number(process.env.DB_PORT)  || 1433,
+  options: { encrypt: false, trustServerCertificate: true },
+};
+
+let poolUDAT;
+sql.connect(configUDAT)
+  .then(p => { poolUDAT = p; console.log('✅ Conectado a UDAT'); })
+  .catch(e => console.log('❌ Error UDAT:', e.message));
+
 // CONEXIÓN SQL
 let pool;
 let visitasPK   = 'VisitaId'; // nombre real de la PK de Visitas, detectado al startup
@@ -5211,14 +5226,15 @@ app.post('/api/acceso-alumnos', autenticar, async (req, res) => {
     const { matricula, tipoAcceso } = req.body;
     if (!matricula || !tipoAcceso) return res.status(400).json({ error: 'Matrícula y tipoAcceso son requeridos' });
 
-    // Buscar en UDAT.dbo.Operador (cross-database, mismo servidor)
-    const op = await pool.request()
+    // Buscar en UDAT.dbo.Operador con conexión dedicada
+    if (!poolUDAT) return res.status(500).json({ error: 'Sin conexión a base UDAT' });
+    const op = await poolUDAT.request()
       .input('mat', sql.NVarChar(100), matricula.trim())
       .query(`
         SELECT TOP 1 OperadorId,
           LTRIM(RTRIM(ISNULL(Nombre,'') + ' ' + ISNULL(ApellidoPaterno,'') + ' ' + ISNULL(ApellidoMaterno,''))) AS NombreCompleto,
           Matricula
-        FROM [UDAT].[dbo].[Operador]
+        FROM dbo.Operador
         WHERE Matricula = @mat AND (Eliminado = 0 OR Eliminado IS NULL)
       `);
 
