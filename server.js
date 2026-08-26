@@ -5284,6 +5284,17 @@ app.get('/api/asistencia', autenticar, async (req, res) => {
 });
 
 // ─── Acceso Alumnos QR ────────────────────────────────────────────────────────
+app.delete('/api/acceso-alumnos/:id', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    if (req.usuario.rol !== 'admin') return res.status(403).json({ error: 'Solo admin puede eliminar registros' });
+    const id = Number(req.params.id);
+    await pool.request().input('id', sql.Int, id)
+      .query('DELETE FROM dbo.RegistroAccesoAlumnos WHERE RegistroId = @id');
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.get('/api/acceso-alumnos', autenticar, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
