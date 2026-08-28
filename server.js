@@ -760,6 +760,46 @@ sql
         `);
         console.log('✅ Tabla RegistroAccesoAlumnos asegurada');
 
+        // Tabla de asistencia diaria por alumno
+        await pool.request().query(`
+          IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'RegistroAsistenciaDiaria' AND schema_id = SCHEMA_ID('dbo'))
+          BEGIN
+            CREATE TABLE dbo.RegistroAsistenciaDiaria (
+              AsistenciaId      INT IDENTITY(1,1) PRIMARY KEY,
+              OperadorId        INT           NOT NULL,
+              Matricula         NVARCHAR(100) NOT NULL,
+              GeneracionId      INT           NOT NULL,
+              Fecha             DATE          NOT NULL,
+              Tipo              NVARCHAR(10)  NOT NULL,
+              Horas             DECIMAL(5,1)  NOT NULL DEFAULT 0,
+              EsAutoQR          BIT           NOT NULL DEFAULT 0,
+              ModificadoPor     NVARCHAR(200) NULL,
+              FechaModificacion DATETIME2     NOT NULL DEFAULT SYSUTCDATETIME(),
+              CONSTRAINT UQ_AsistenciaDiaria UNIQUE (OperadorId, GeneracionId, Fecha)
+            )
+          END
+        `);
+        console.log('✅ Tabla RegistroAsistenciaDiaria asegurada');
+
+        // Criterios de asistencia
+        await pool.request().query(`
+          IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'CriterioAsistencia' AND schema_id = SCHEMA_ID('dbo'))
+          BEGIN
+            CREATE TABLE dbo.CriterioAsistencia (
+              Tipo  NVARCHAR(10) PRIMARY KEY,
+              Horas DECIMAL(5,1) NOT NULL,
+              Label NVARCHAR(50) NOT NULL,
+              Color NVARCHAR(20) NOT NULL
+            )
+            INSERT INTO dbo.CriterioAsistencia (Tipo, Horas, Label, Color) VALUES
+              ('A',  12, 'Asistencia', '#16a34a'),
+              ('MD',  4, 'Medio día',  '#d97706'),
+              ('D',   0, 'Descanso',   '#6b7280'),
+              ('B',   0, 'Falta',      '#dc2626')
+          END
+        `);
+        console.log('✅ Tabla CriterioAsistencia asegurada');
+
       } catch (e) {
         console.log("❌ Error asegurando tablas:", e);
       }
@@ -5207,11 +5247,164 @@ app.get('/api/generaciones', autenticar, async (req, res) => {
   try {
     if (!poolUDAT) return res.status(500).json({ error: 'Sin conexión a UDAT' });
     const result = await poolUDAT.request().query(`
-      SELECT GeneracionId, Nombre
+      SELECT GeneracionId, Nombre, FechaInicio
       FROM dbo.Generacion
       ORDER BY Nombre DESC
     `);
     res.json(result.recordset);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ─── Grid de asistencia completo ──────────────────────────────────────────────
+app.get('/api/asistencia-grid', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    if (!poolUDAT) return res.status(500).json({ error: 'Sin conexión a UDAT' });
+    const { generacionId } = req.query;
+    if (!generacionId) return res.status(400).json({ error: 'generacionId requerido' });
+
+    // 1. Información de la generación (UDAT)
+    const genRes = await poolUDAT.request()
+      .input('genId', sql.Int, Number(generacionId))
+      .query(`SELECT TOP 1 GeneracionId, Nombre, FechaInicio FROM dbo.Generacion WHERE GeneracionId = @genId`);
+    if (!genRes.recordset.length) return res.status(404).json({ error: 'Generación no encontrada' });
+    const { Nombre, FechaInicio } = genRes.recordset[0];
+
+    // 2. Alumnos de la generación (UDAT)
+    const alumnosRes = await poolUDAT.request()
+      .input('genId', sql.Int, Number(generacionId))
+      .query(`
+        WITH AplicacionUnica AS (
+          SELECT OperadorId,
+                 ROW_NUMBER() OVER (PARTITION BY OperadorId ORDER BY FechaAplicacion DESC) AS rn
+          FROM dbo.Aplicacion WHERE GeneracionId = @genId AND (Eliminado = 0 OR Eliminado IS NULL)
+        )
+        SELECT o.OperadorId, o.Matricula,
+          LTRIM(RTRIM(ISNULL(o.Nombre,'') + ' ' + ISNULL(o.ApellidoPaterno,'') + ' ' + ISNULL(o.ApellidoMaterno,''))) AS Nombre
+        FROM dbo.Operador o
+        INNER JOIN AplicacionUnica a ON a.OperadorId = o.OperadorId AND a.rn = 1
+        WHERE (o.Eliminado = 0 OR o.Eliminado IS NULL)
+        ORDER BY o.ApellidoPaterno, o.ApellidoMaterno, o.Nombre
+      `);
+
+    // 3. Rango de fechas: FechaInicio → hoy
+    const inicio = new Date(FechaInicio); inicio.setHours(12, 0, 0, 0);
+    const hoy    = new Date();            hoy.setHours(12, 0, 0, 0);
+    const fechas = [];
+    const cur = new Date(inicio);
+    while (cur <= hoy) { fechas.push(cur.toISOString().substring(0, 10)); cur.setDate(cur.getDate() + 1); }
+    if (!fechas.length) return res.json({ generacion: Nombre, fechaInicio: inicio.toISOString().substring(0, 10), fechas: [], alumnos: [] });
+
+    // 4. Criterios de horas
+    const critRes = await pool.request().query('SELECT Tipo, Horas FROM dbo.CriterioAsistencia');
+    const critMap = {};
+    for (const c of critRes.recordset) critMap[c.Tipo] = Number(c.Horas);
+
+    // 5. Registros manuales/auto existentes (biUDAT)
+    const regRes = await pool.request()
+      .input('genId', sql.Int, Number(generacionId))
+      .input('fi', sql.Date, inicio.toISOString().substring(0, 10))
+      .query(`
+        SELECT OperadorId, CONVERT(NVARCHAR(10), Fecha, 120) AS Fecha, Tipo, Horas, EsAutoQR
+        FROM dbo.RegistroAsistenciaDiaria
+        WHERE GeneracionId = @genId AND Fecha >= @fi
+      `);
+    const regMap = {};
+    for (const r of regRes.recordset) regMap[`${r.OperadorId}_${r.Fecha}`] = r;
+
+    // 6. Registros QR agrupados por matrícula+fecha (biUDAT)
+    const qrRes = await pool.request()
+      .input('fi', sql.Date, inicio.toISOString().substring(0, 10))
+      .query(`
+        SELECT Matricula, CONVERT(NVARCHAR(10), CAST(FechaHora AS DATE), 120) AS Fecha
+        FROM dbo.RegistroAccesoAlumnos
+        WHERE CAST(FechaHora AS DATE) >= @fi
+        GROUP BY Matricula, CONVERT(NVARCHAR(10), CAST(FechaHora AS DATE), 120)
+      `);
+    const qrSet = new Set(qrRes.recordset.map(r => `${r.Matricula}_${r.Fecha}`));
+
+    // 7. Construir grid
+    const alumnos = alumnosRes.recordset.map(alumno => {
+      let totalHoras = 0, cntA = 0, cntMD = 0, cntB = 0;
+      const dias = {};
+      for (const fecha of fechas) {
+        const key = `${alumno.OperadorId}_${fecha}`;
+        let tipo, horas, esManual;
+        if (regMap[key]) {
+          tipo = regMap[key].Tipo; horas = Number(regMap[key].Horas); esManual = regMap[key].EsAutoQR === false || regMap[key].EsAutoQR === 0;
+        } else {
+          const dow = new Date(fecha + 'T12:00:00').getDay();
+          if (dow === 0) tipo = 'D';
+          else if (qrSet.has(`${alumno.Matricula}_${fecha}`)) tipo = 'A';
+          else tipo = 'B';
+          horas = critMap[tipo] ?? 0; esManual = false;
+        }
+        dias[fecha] = { tipo, horas, esManual };
+        totalHoras += horas;
+        if (tipo === 'A') cntA++; else if (tipo === 'MD') cntMD++; else if (tipo === 'B') cntB++;
+      }
+      return { ...alumno, dias, totalHoras, cntA, cntMD, cntB };
+    });
+
+    res.json({ generacion: Nombre, fechaInicio: inicio.toISOString().substring(0, 10), fechas, alumnos });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/asistencia-grid/guardar', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const { operadorId, generacionId, matricula, fecha, tipo } = req.body;
+    if (!operadorId || !generacionId || !matricula || !fecha || !tipo) return res.status(400).json({ error: 'Faltan campos' });
+
+    const critRes = await pool.request()
+      .input('tipo', sql.NVarChar(10), tipo)
+      .query('SELECT Horas FROM dbo.CriterioAsistencia WHERE Tipo = @tipo');
+    const horas = critRes.recordset[0] ? Number(critRes.recordset[0].Horas) : 0;
+    const modificadoPor = req.usuario?.nombre || req.usuario?.correo || null;
+
+    await pool.request()
+      .input('OperadorId', sql.Int, Number(operadorId))
+      .input('Matricula', sql.NVarChar(100), matricula)
+      .input('GeneracionId', sql.Int, Number(generacionId))
+      .input('Fecha', sql.Date, fecha)
+      .input('Tipo', sql.NVarChar(10), tipo)
+      .input('Horas', sql.Decimal(5, 1), horas)
+      .input('ModificadoPor', sql.NVarChar(200), modificadoPor)
+      .query(`
+        MERGE dbo.RegistroAsistenciaDiaria AS tgt
+        USING (SELECT @OperadorId AS OperadorId, @Matricula AS Matricula, @GeneracionId AS GeneracionId,
+                      @Fecha AS Fecha, @Tipo AS Tipo, @Horas AS Horas, 0 AS EsAutoQR, @ModificadoPor AS Mod) AS src
+        ON (tgt.OperadorId = src.OperadorId AND tgt.GeneracionId = src.GeneracionId AND tgt.Fecha = src.Fecha)
+        WHEN MATCHED THEN UPDATE SET Tipo=src.Tipo, Horas=src.Horas, EsAutoQR=0, ModificadoPor=src.Mod, FechaModificacion=SYSUTCDATETIME()
+        WHEN NOT MATCHED THEN INSERT (OperadorId,Matricula,GeneracionId,Fecha,Tipo,Horas,EsAutoQR,ModificadoPor,FechaModificacion)
+          VALUES (src.OperadorId,src.Matricula,src.GeneracionId,src.Fecha,src.Tipo,src.Horas,0,src.Mod,SYSUTCDATETIME());
+      `);
+    res.json({ ok: true, horas });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/criterios-asistencia', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const r = await pool.request().query('SELECT Tipo, Horas, Label, Color FROM dbo.CriterioAsistencia ORDER BY Tipo');
+    res.json(r.recordset);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/criterios-asistencia', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const criterios = req.body;
+    if (!Array.isArray(criterios)) return res.status(400).json({ error: 'Se espera un array' });
+    for (const c of criterios) {
+      await pool.request()
+        .input('Tipo', sql.NVarChar(10), c.Tipo)
+        .input('Horas', sql.Decimal(5, 1), Number(c.Horas))
+        .input('Label', sql.NVarChar(50), c.Label)
+        .input('Color', sql.NVarChar(20), c.Color)
+        .query(`UPDATE dbo.CriterioAsistencia SET Horas=@Horas, Label=@Label, Color=@Color WHERE Tipo=@Tipo`);
+    }
+    res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
