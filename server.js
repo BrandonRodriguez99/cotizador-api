@@ -5311,6 +5311,26 @@ app.get('/api/acceso-alumnos', autenticar, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+app.get('/api/acceso-alumnos/alumno', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const { matricula, fecha } = req.query;
+    if (!matricula) return res.status(400).json({ error: 'matricula requerida' });
+    const fechaFiltro = fecha || new Date().toISOString().substring(0, 10);
+    const result = await pool.request()
+      .input('matricula', sql.NVarChar(100), matricula.trim())
+      .input('fecha', sql.Date, fechaFiltro)
+      .query(`
+        SELECT RegistroId, Matricula, Nombre, TipoAcceso, FechaHora, RegistradoPor
+        FROM dbo.RegistroAccesoAlumnos
+        WHERE Matricula = @matricula
+          AND CAST(FechaHora AS DATE) = @fecha
+        ORDER BY FechaHora ASC
+      `);
+    res.json(result.recordset);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.post('/api/acceso-alumnos', autenticar, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
