@@ -795,8 +795,19 @@ sql
               ('A',  12, 'Asistencia', '#16a34a'),
               ('MD',  4, 'Medio día',  '#d97706'),
               ('D',   0, 'Descanso',   '#6b7280'),
-              ('B',   0, 'Falta',      '#dc2626')
+              ('F',   0, 'Falta',      '#dc2626'),
+              ('I',   8, 'Incapacidad','#0891b2'),
+              ('P',   4, 'Permiso',    '#7c3aed'),
+              ('B',   0, 'Baja',       '#78350f')
           END
+          -- Asegurar que los nuevos tipos existan en DBs ya creadas
+          IF NOT EXISTS (SELECT 1 FROM dbo.CriterioAsistencia WHERE Tipo='F')
+            INSERT INTO dbo.CriterioAsistencia VALUES ('F', 0, 'Falta', '#dc2626')
+          IF NOT EXISTS (SELECT 1 FROM dbo.CriterioAsistencia WHERE Tipo='I')
+            INSERT INTO dbo.CriterioAsistencia VALUES ('I', 8, 'Incapacidad', '#0891b2')
+          IF NOT EXISTS (SELECT 1 FROM dbo.CriterioAsistencia WHERE Tipo='P')
+            INSERT INTO dbo.CriterioAsistencia VALUES ('P', 4, 'Permiso', '#7c3aed')
+          UPDATE dbo.CriterioAsistencia SET Label='Baja', Color='#78350f' WHERE Tipo='B' AND Label='Falta'
         `);
         console.log('✅ Tabla CriterioAsistencia asegurada');
 
@@ -5325,7 +5336,7 @@ app.get('/api/asistencia-grid', autenticar, async (req, res) => {
 
     // 7. Construir grid
     const alumnos = alumnosRes.recordset.map(alumno => {
-      let totalHoras = 0, cntA = 0, cntMD = 0, cntB = 0;
+      let totalHoras = 0, cntA = 0, cntMD = 0, cntF = 0, cntI = 0, cntP = 0, cntB = 0;
       const dias = {};
       for (const fecha of fechas) {
         const key = `${alumno.OperadorId}_${fecha}`;
@@ -5335,15 +5346,21 @@ app.get('/api/asistencia-grid', autenticar, async (req, res) => {
         } else {
           const dow = new Date(fecha + 'T12:00:00').getDay();
           if (dow === 0) tipo = 'D';
+          else if (dow === 6) tipo = 'MD';
           else if (qrSet.has(`${alumno.Matricula}_${fecha}`)) tipo = 'A';
-          else tipo = 'B';
+          else tipo = 'F';
           horas = critMap[tipo] ?? 0; esManual = false;
         }
         dias[fecha] = { tipo, horas, esManual };
-        totalHoras += horas;
-        if (tipo === 'A') cntA++; else if (tipo === 'MD') cntMD++; else if (tipo === 'B') cntB++;
+        if (tipo !== 'D') totalHoras += horas;
+        if (tipo === 'A') cntA++;
+        else if (tipo === 'MD') cntMD++;
+        else if (tipo === 'F') cntF++;
+        else if (tipo === 'I') cntI++;
+        else if (tipo === 'P') cntP++;
+        else if (tipo === 'B') cntB++;
       }
-      return { ...alumno, dias, totalHoras, cntA, cntMD, cntB };
+      return { ...alumno, dias, totalHoras, cntA, cntMD, cntF, cntI, cntP, cntB };
     });
 
     res.json({ generacion: Nombre, fechaInicio: inicio.toISOString().substring(0, 10), fechas, alumnos });
