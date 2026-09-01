@@ -796,18 +796,19 @@ sql
               ('MD',  4, 'Medio día',  '#d97706'),
               ('D',   0, 'Descanso',   '#6b7280'),
               ('F',   0, 'Falta',      '#dc2626'),
-              ('I',   8, 'Incapacidad','#0891b2'),
-              ('P',   4, 'Permiso',    '#7c3aed'),
+              ('I',   0, 'Incapacidad','#0891b2'),
+              ('P',   0, 'Permiso',    '#7c3aed'),
               ('B',   0, 'Baja',       '#78350f')
           END
           -- Asegurar que los nuevos tipos existan en DBs ya creadas
           IF NOT EXISTS (SELECT 1 FROM dbo.CriterioAsistencia WHERE Tipo='F')
             INSERT INTO dbo.CriterioAsistencia VALUES ('F', 0, 'Falta', '#dc2626')
           IF NOT EXISTS (SELECT 1 FROM dbo.CriterioAsistencia WHERE Tipo='I')
-            INSERT INTO dbo.CriterioAsistencia VALUES ('I', 8, 'Incapacidad', '#0891b2')
+            INSERT INTO dbo.CriterioAsistencia VALUES ('I', 0, 'Incapacidad', '#0891b2')
           IF NOT EXISTS (SELECT 1 FROM dbo.CriterioAsistencia WHERE Tipo='P')
-            INSERT INTO dbo.CriterioAsistencia VALUES ('P', 4, 'Permiso', '#7c3aed')
+            INSERT INTO dbo.CriterioAsistencia VALUES ('P', 0, 'Permiso', '#7c3aed')
           UPDATE dbo.CriterioAsistencia SET Label='Baja', Color='#78350f' WHERE Tipo='B' AND Label='Falta'
+          UPDATE dbo.CriterioAsistencia SET Horas=0 WHERE Tipo IN ('I','P') AND Horas > 0
         `);
         console.log('✅ Tabla CriterioAsistencia asegurada');
 
