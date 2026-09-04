@@ -820,6 +820,58 @@ sql
         `);
         console.log('✅ Tabla CriterioAsistencia asegurada');
 
+        // ── Permisos de vistas por rol ────────────────────────────────────────
+        await pool.request().query(`
+          IF OBJECT_ID('dbo.PermisosRol','U') IS NULL
+          BEGIN
+            CREATE TABLE dbo.PermisosRol (
+              Rol   NVARCHAR(50) NOT NULL,
+              Vista NVARCHAR(50) NOT NULL,
+              PRIMARY KEY (Rol, Vista)
+            )
+            INSERT INTO dbo.PermisosRol (Rol, Vista) VALUES
+              ('admin','dashboard'),('admin','inicio'),('admin','mantenimiento'),('admin','inventario'),
+              ('admin','ordenesCompra'),('admin','registroProveedores'),('admin','cotizacion'),
+              ('admin','historial'),('admin','aprobaciones'),('admin','asistencia'),
+              ('admin','vehiculos'),('admin','seguridad'),('admin','cursos'),('admin','conceptos'),
+              ('admin','coaches'),('admin','modalidades'),('admin','clientes'),('admin','proveedores'),
+              ('admin','unidadesNegocio'),('admin','areasConsumo'),('admin','usuarios'),('admin','permisos'),
+              ('autorizador1','dashboard'),('autorizador1','mantenimiento'),('autorizador1','inventario'),
+              ('autorizador1','ordenesCompra'),('autorizador1','registroProveedores'),('autorizador1','cotizacion'),
+              ('autorizador1','historial'),('autorizador1','aprobaciones'),('autorizador1','asistencia'),
+              ('autorizador1','cursos'),('autorizador1','conceptos'),('autorizador1','coaches'),
+              ('autorizador1','modalidades'),('autorizador1','clientes'),('autorizador1','proveedores'),
+              ('autorizador1','unidadesNegocio'),('autorizador1','areasConsumo'),
+              ('autorizador2','dashboard'),('autorizador2','mantenimiento'),('autorizador2','inventario'),
+              ('autorizador2','ordenesCompra'),('autorizador2','registroProveedores'),('autorizador2','cotizacion'),
+              ('autorizador2','historial'),('autorizador2','aprobaciones'),('autorizador2','asistencia'),
+              ('autorizador2','cursos'),('autorizador2','conceptos'),('autorizador2','coaches'),
+              ('autorizador2','modalidades'),('autorizador2','clientes'),('autorizador2','proveedores'),
+              ('autorizador2','unidadesNegocio'),('autorizador2','areasConsumo'),
+              ('empleado','inicio'),('empleado','mantenimiento'),('empleado','inventario'),
+              ('empleado','ordenesCompra'),('empleado','registroProveedores'),('empleado','cotizacion'),
+              ('empleado','historial'),('empleado','aprobaciones'),('empleado','asistencia'),
+              ('empleado','cursos'),('empleado','conceptos'),('empleado','coaches'),
+              ('empleado','modalidades'),('empleado','clientes'),('empleado','proveedores'),
+              ('empleado','unidadesNegocio'),('empleado','areasConsumo'),
+              ('jefe_mantenimiento','inicio'),('jefe_mantenimiento','mantenimiento'),('jefe_mantenimiento','inventario'),
+              ('jefe_mantenimiento','ordenesCompra'),('jefe_mantenimiento','registroProveedores'),('jefe_mantenimiento','cotizacion'),
+              ('jefe_mantenimiento','historial'),('jefe_mantenimiento','aprobaciones'),('jefe_mantenimiento','asistencia'),
+              ('jefe_mantenimiento','cursos'),('jefe_mantenimiento','conceptos'),('jefe_mantenimiento','coaches'),
+              ('jefe_mantenimiento','modalidades'),('jefe_mantenimiento','clientes'),('jefe_mantenimiento','proveedores'),
+              ('jefe_mantenimiento','unidadesNegocio'),('jefe_mantenimiento','areasConsumo'),
+              ('mantenimiento','mantenimiento'),
+              ('seguridad','seguridad'),
+              ('encargado_vehiculos','inicio'),('encargado_vehiculos','mantenimiento'),('encargado_vehiculos','inventario'),
+              ('encargado_vehiculos','ordenesCompra'),('encargado_vehiculos','registroProveedores'),('encargado_vehiculos','cotizacion'),
+              ('encargado_vehiculos','historial'),('encargado_vehiculos','aprobaciones'),('encargado_vehiculos','asistencia'),
+              ('encargado_vehiculos','vehiculos'),('encargado_vehiculos','cursos'),('encargado_vehiculos','conceptos'),
+              ('encargado_vehiculos','coaches'),('encargado_vehiculos','modalidades'),('encargado_vehiculos','clientes'),
+              ('encargado_vehiculos','proveedores'),('encargado_vehiculos','unidadesNegocio'),('encargado_vehiculos','areasConsumo')
+          END
+        `);
+        console.log('✅ Tabla PermisosRol asegurada');
+
       } catch (e) {
         console.log("❌ Error asegurando tablas:", e);
       }
@@ -1332,6 +1384,15 @@ function soloAdminOJefeSeg(req, res, next) {
 app.get("/", (req, res) => res.send("API funcionando"));
 
 // ─── AUTH ─────────────────────────────────────────────────────────────────────
+async function getVistasDeRol(rol) {
+  try {
+    const r = await pool.request()
+      .input('rol', sql.NVarChar(50), rol)
+      .query('SELECT Vista FROM dbo.PermisosRol WHERE Rol = @rol ORDER BY Vista');
+    return r.recordset.map(x => x.Vista);
+  } catch { return []; }
+}
+
 app.get("/api/auth/me", autenticar, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
@@ -1345,7 +1406,8 @@ app.get("/api/auth/me", autenticar, async (req, res) => {
       JWT_SECRET,
       { expiresIn: "8h" }
     );
-    res.json({ token: newToken, usuario: { id: u.UsuarioId, correo: u.Correo, nombre: u.Nombre, rol: u.Rol, debeReiniciarPass: u.DebeReiniciarPass } });
+    const vistas = await getVistasDeRol(u.Rol);
+    res.json({ token: newToken, usuario: { id: u.UsuarioId, correo: u.Correo, nombre: u.Nombre, rol: u.Rol, debeReiniciarPass: u.DebeReiniciarPass }, vistas });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -1375,6 +1437,7 @@ app.post("/api/auth/login", async (req, res) => {
       { expiresIn: "8h" }
     );
 
+    const vistas = await getVistasDeRol(user.Rol);
     res.json({
       token,
       usuario: {
@@ -1384,6 +1447,7 @@ app.post("/api/auth/login", async (req, res) => {
         rol: user.Rol,
         debeReiniciarPass: Boolean(user.DebeReiniciarPass),
       },
+      vistas,
     });
   } catch (err) {
     console.log("❌ LOGIN:", err);
@@ -4700,6 +4764,39 @@ app.post('/api/upload/foto-rondin', autenticar, async (req, res) => {
     console.log('❌ Error Cloudinary:', err.http_code, err.message, JSON.stringify(err));
     res.status(500).json({ error: err.message || 'No se pudo subir la imagen' });
   }
+});
+
+// ── Administración de permisos ────────────────────────────────────────────────
+app.get('/api/admin/permisos', autenticar, async (req, res) => {
+  if (req.usuario.rol !== 'admin') return res.status(403).json({ error: 'Sin acceso' });
+  try {
+    if (!ensurePool(res)) return;
+    const r = await pool.request().query('SELECT Rol, Vista FROM dbo.PermisosRol ORDER BY Rol, Vista');
+    const mapa = {};
+    for (const row of r.recordset) {
+      if (!mapa[row.Rol]) mapa[row.Rol] = [];
+      mapa[row.Rol].push(row.Vista);
+    }
+    res.json(mapa);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/admin/permisos/:rol', autenticar, async (req, res) => {
+  if (req.usuario.rol !== 'admin') return res.status(403).json({ error: 'Sin acceso' });
+  try {
+    if (!ensurePool(res)) return;
+    const rol = req.params.rol;
+    const { vistas } = req.body;
+    if (!rol || !Array.isArray(vistas)) return res.status(400).json({ error: 'Faltan datos' });
+    await pool.request().input('rol', sql.NVarChar(50), rol).query('DELETE FROM dbo.PermisosRol WHERE Rol=@rol');
+    for (const vista of vistas) {
+      await pool.request()
+        .input('rol', sql.NVarChar(50), rol)
+        .input('vista', sql.NVarChar(50), vista)
+        .query('INSERT INTO dbo.PermisosRol (Rol, Vista) VALUES (@rol, @vista)');
+    }
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ── Endpoints públicos (sin autenticación) ────────────────────────────────────
