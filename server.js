@@ -4620,8 +4620,10 @@ app.put('/api/seguridad/ordenes-vehiculo/:id/salida', autenticar, async (req, re
       .input('FotoSalidaLateralDer', sql.NVarChar(500), FotoSalidaLateralDer || null)
       .query(`UPDATE OrdenesVehiculo SET
         Estado='en_curso', HoraSalidaReal=@HoraSalidaReal, KmInicial=@KmInicial, RegistradoPorSalida=@RegistradoPorSalida,
-        FotoSalidaFrontal=@FotoSalidaFrontal, FotoSalidaTrasero=@FotoSalidaTrasero,
-        FotoSalidaLateralIzq=@FotoSalidaLateralIzq, FotoSalidaLateralDer=@FotoSalidaLateralDer
+        FotoSalidaFrontal=COALESCE(@FotoSalidaFrontal, FotoSalidaFrontal),
+        FotoSalidaTrasero=COALESCE(@FotoSalidaTrasero, FotoSalidaTrasero),
+        FotoSalidaLateralIzq=COALESCE(@FotoSalidaLateralIzq, FotoSalidaLateralIzq),
+        FotoSalidaLateralDer=COALESCE(@FotoSalidaLateralDer, FotoSalidaLateralDer)
         WHERE OrdenVehiculoId=@id`);
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -4862,9 +4864,15 @@ app.post('/api/public/solicitud-vehiculo', async (req, res) => {
       .input('HoraSalidaEstimada',  sql.NVarChar(10),   d.HoraSalidaEstimada || null)
       .input('Pasajeros',           sql.Int,            d.Pasajeros ? Number(d.Pasajeros) : null)
       .input('Observaciones',       sql.NVarChar(4000), d.Observaciones      || null)
+      .input('FotoSalidaFrontal',    sql.NVarChar(500), d.FotoSalidaFrontal    || null)
+      .input('FotoSalidaTrasero',    sql.NVarChar(500), d.FotoSalidaTrasero    || null)
+      .input('FotoSalidaLateralIzq', sql.NVarChar(500), d.FotoSalidaLateralIzq || null)
+      .input('FotoSalidaLateralDer', sql.NVarChar(500), d.FotoSalidaLateralDer || null)
       .query(`INSERT INTO OrdenesVehiculo
-        (VehiculoId,Solicitante,Destino,Motivo,FechaSalidaEstimada,HoraSalidaEstimada,Pasajeros,Observaciones)
-        VALUES (@VehiculoId,@Solicitante,@Destino,@Motivo,@FechaSalidaEstimada,@HoraSalidaEstimada,@Pasajeros,@Observaciones);
+        (VehiculoId,Solicitante,Destino,Motivo,FechaSalidaEstimada,HoraSalidaEstimada,Pasajeros,Observaciones,
+         FotoSalidaFrontal,FotoSalidaTrasero,FotoSalidaLateralIzq,FotoSalidaLateralDer)
+        VALUES (@VehiculoId,@Solicitante,@Destino,@Motivo,@FechaSalidaEstimada,@HoraSalidaEstimada,@Pasajeros,@Observaciones,
+         @FotoSalidaFrontal,@FotoSalidaTrasero,@FotoSalidaLateralIzq,@FotoSalidaLateralDer);
         SELECT SCOPE_IDENTITY() AS id`);
     const ordenId = r.recordset[0].id;
     const folio   = generateSegFolio('SV', ordenId);
