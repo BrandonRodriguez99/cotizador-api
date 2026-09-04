@@ -680,6 +680,14 @@ sql
             ALTER TABLE dbo.OrdenesVehiculo ADD FotoLlegadaLateralIzq NVARCHAR(500) NULL;
           IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.OrdenesVehiculo') AND name='FotoLlegadaLateralDer')
             ALTER TABLE dbo.OrdenesVehiculo ADD FotoLlegadaLateralDer NVARCHAR(500) NULL;
+          IF OBJECT_ID('dbo.OrdenesVehiculoAlumnos','U') IS NULL
+            CREATE TABLE dbo.OrdenesVehiculoAlumnos (
+              Id              INT IDENTITY(1,1) PRIMARY KEY,
+              OrdenVehiculoId INT NOT NULL,
+              OperadorId      INT NULL,
+              Matricula       NVARCHAR(50) NULL,
+              Nombre          NVARCHAR(300) NULL
+            );
         `);
         console.log("✅ Tablas de seguridad aseguradas");
 
@@ -4416,13 +4424,18 @@ app.get('/api/seguridad/ordenes-vehiculo', autenticar, async (req, res) => {
     if (!ensurePool(res)) return;
     const { estado, mine } = req.query;
     const req2 = pool.request();
-    let q = `SELECT ov.*, ISNULL(v.Marca+' '+v.Modelo+' ('+v.Placa+')','Sin vehículo') AS VehiculoNombre
+    let q = `SELECT ov.*, ISNULL(v.Marca+' '+v.Modelo+' ('+v.Placa+')','Sin vehículo') AS VehiculoNombre,
+             (SELECT ova.OperadorId, ova.Matricula, ova.Nombre FROM OrdenesVehiculoAlumnos ova WHERE ova.OrdenVehiculoId = ov.OrdenVehiculoId FOR JSON PATH) AS AlumnosJson
              FROM OrdenesVehiculo ov LEFT JOIN Vehiculos v ON ov.VehiculoId=v.VehiculoId WHERE 1=1`;
     if (estado) { q += ' AND ov.Estado=@estado'; req2.input('estado', sql.NVarChar(50), estado); }
     if (mine)   { q += ' AND ov.Solicitante=@sol'; req2.input('sol', sql.NVarChar(200), req.usuario?.nombre || ''); }
     q += ' ORDER BY ov.FechaCreacion DESC';
     const r = await req2.query(q);
-    res.json(r.recordset);
+    const records = r.recordset.map(o => {
+      const { AlumnosJson, ...rest } = o;
+      return { ...rest, Alumnos: AlumnosJson ? JSON.parse(AlumnosJson) : [] };
+    });
+    res.json(records);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -4700,6 +4713,43 @@ app.get('/api/public/vehiculos', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+app.get('/api/public/usuarios', async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const r = await pool.request().query('SELECT UsuarioId, Nombre FROM dbo.Usuarios WHERE Activo=1 ORDER BY Nombre');
+    res.json(r.recordset);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/public/generaciones', async (req, res) => {
+  try {
+    if (!poolUDAT) return res.status(500).json({ error: 'Sin conexión a UDAT' });
+    const r = await poolUDAT.request().query('SELECT GeneracionId, Nombre FROM dbo.Generacion ORDER BY Nombre DESC');
+    res.json(r.recordset);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/public/alumnos-por-generacion', async (req, res) => {
+  try {
+    if (!poolUDAT) return res.status(500).json({ error: 'Sin conexión a UDAT' });
+    const genId = Number(req.query.genId);
+    if (!genId) return res.status(400).json({ error: 'genId requerido' });
+    const r = await poolUDAT.request().input('genId', sql.Int, genId).query(`
+      WITH AplicacionUnica AS (
+        SELECT OperadorId, ROW_NUMBER() OVER (PARTITION BY OperadorId ORDER BY FechaAplicacion DESC) AS rn
+        FROM dbo.Aplicacion WHERE GeneracionId = @genId AND (Eliminado = 0 OR Eliminado IS NULL)
+      )
+      SELECT o.OperadorId, o.Matricula,
+        LTRIM(RTRIM(ISNULL(o.Nombre,'') + ' ' + ISNULL(o.ApellidoPaterno,'') + ' ' + ISNULL(o.ApellidoMaterno,''))) AS Nombre
+      FROM dbo.Operador o
+      INNER JOIN AplicacionUnica a ON a.OperadorId = o.OperadorId AND a.rn = 1
+      WHERE (o.Eliminado = 0 OR o.Eliminado IS NULL)
+      ORDER BY o.ApellidoPaterno, o.ApellidoMaterno, o.Nombre
+    `);
+    res.json(r.recordset);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.post('/api/public/solicitud-vehiculo', async (req, res) => {
   try {
     if (!ensurePool(res)) return;
@@ -4723,6 +4773,16 @@ app.post('/api/public/solicitud-vehiculo', async (req, res) => {
     const folio   = generateSegFolio('SV', ordenId);
     await pool.request().input('id', sql.Int, ordenId).input('Folio', sql.NVarChar(50), folio)
       .query('UPDATE OrdenesVehiculo SET Folio=@Folio WHERE OrdenVehiculoId=@id');
+    if (Array.isArray(d.Alumnos) && d.Alumnos.length) {
+      for (const a of d.Alumnos) {
+        await pool.request()
+          .input('oid', sql.Int, ordenId)
+          .input('OperadorId', sql.Int, a.OperadorId || null)
+          .input('Matricula', sql.NVarChar(50), a.Matricula || null)
+          .input('Nombre', sql.NVarChar(300), a.Nombre || null)
+          .query('INSERT INTO OrdenesVehiculoAlumnos (OrdenVehiculoId,OperadorId,Matricula,Nombre) VALUES (@oid,@OperadorId,@Matricula,@Nombre)');
+      }
+    }
     res.json({ ok: true, ordenId, folio });
     ;(async () => {
       try {
