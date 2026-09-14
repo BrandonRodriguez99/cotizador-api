@@ -2960,7 +2960,7 @@ const PDF_DOC_REV   = "2";
 const PDF_DOC_FECHA = "10-Ago-2026";
 const PDF_EMPRESA   = "UNIVERSIDAD DE AUTOTRANSPORTE SC";
 const PDF_DIRECCION = "CARRETERA A COLOMBIA 2080, COL. ANDRES CABALLERO MORENO AGROP, ESCOBEDO, N.L. CP 66080";
-const PDF_LOGO_PATH = path.join(__dirname, "..", "imagenes", "UDAT_Wordmark-04.png");
+const PDF_LOGO_PATH = path.join(__dirname, "imagenes", "UDAT_Sello-04.png");
 
 function fmtMXN(val) {
   return "$" + Number(val || 0).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
