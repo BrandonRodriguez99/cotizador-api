@@ -5463,6 +5463,7 @@ app.get('/api/asistencia-grid', autenticar, async (req, res) => {
         INNER JOIN AplicacionUnica a ON a.OperadorId = o.OperadorId AND a.rn = 1
         LEFT JOIN dbo.Empresa emp ON emp.EmpresaId = o.EmpresaId
         WHERE (o.Eliminado = 0 OR o.Eliminado IS NULL)
+          AND o.EstatusId IN (39, 42)
         ORDER BY o.ApellidoPaterno, o.ApellidoMaterno, o.Nombre
       `);
 
@@ -5722,7 +5723,7 @@ app.post('/api/acceso-alumnos', autenticar, async (req, res) => {
       .query(`
         SELECT TOP 1 OperadorId,
           LTRIM(RTRIM(ISNULL(Nombre,'') + ' ' + ISNULL(ApellidoPaterno,'') + ' ' + ISNULL(ApellidoMaterno,''))) AS NombreCompleto,
-          Matricula
+          Matricula, EstatusId
         FROM dbo.Operador
         WHERE Matricula = @mat AND (Eliminado = 0 OR Eliminado IS NULL)
       `);
@@ -5731,7 +5732,11 @@ app.post('/api/acceso-alumnos', autenticar, async (req, res) => {
       return res.status(404).json({ error: `Matrícula "${matricula}" no encontrada en el sistema` });
     }
 
-    const { OperadorId, NombreCompleto } = op.recordset[0];
+    const { OperadorId, NombreCompleto, EstatusId } = op.recordset[0];
+
+    if (EstatusId !== 39 && EstatusId !== 42) {
+      return res.status(403).json({ error: 'Baja', baja: true, nombre: NombreCompleto });
+    }
     const registradoPor = req.usuario?.nombre || req.usuario?.correo || null;
 
     const ins = await pool.request()
