@@ -5458,9 +5458,10 @@ app.get('/api/asistencia-grid', autenticar, async (req, res) => {
         )
         SELECT o.OperadorId, o.Matricula,
           LTRIM(RTRIM(ISNULL(o.Nombre,'') + ' ' + ISNULL(o.ApellidoPaterno,'') + ' ' + ISNULL(o.ApellidoMaterno,''))) AS Nombre,
-          ISNULL(o.Empresa,'') AS Empresa
+          ISNULL(emp.Nombre,'') AS Empresa
         FROM dbo.Operador o
         INNER JOIN AplicacionUnica a ON a.OperadorId = o.OperadorId AND a.rn = 1
+        LEFT JOIN dbo.Empresa emp ON emp.EmpresaId = o.EmpresaId
         WHERE (o.Eliminado = 0 OR o.Eliminado IS NULL)
         ORDER BY o.ApellidoPaterno, o.ApellidoMaterno, o.Nombre
       `);
