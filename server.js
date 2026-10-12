@@ -835,7 +835,7 @@ sql
               ('admin','historial'),('admin','aprobaciones'),('admin','asistencia'),
               ('admin','vehiculos'),('admin','seguridad'),('admin','cursos'),('admin','conceptos'),
               ('admin','coaches'),('admin','modalidades'),('admin','clientes'),('admin','proveedores'),
-              ('admin','unidadesNegocio'),('admin','areasConsumo'),('admin','usuarios'),('admin','permisos'),('admin','powerbi'),
+              ('admin','unidadesNegocio'),('admin','areasConsumo'),('admin','usuarios'),('admin','permisos'),
               ('autorizador1','dashboard'),('autorizador1','mantenimiento'),('autorizador1','inventario'),
               ('autorizador1','ordenesCompra'),('autorizador1','registroProveedores'),('autorizador1','cotizacion'),
               ('autorizador1','historial'),('autorizador1','aprobaciones'),('autorizador1','asistencia'),
@@ -871,12 +871,6 @@ sql
           END
         `);
         console.log('✅ Tabla PermisosRol asegurada');
-
-        // Migraciones de vistas nuevas (corren siempre, idempotentes)
-        await pool.request().query(`
-          IF NOT EXISTS (SELECT 1 FROM dbo.PermisosRol WHERE Rol='admin' AND Vista='powerbi')
-            INSERT INTO dbo.PermisosRol (Rol, Vista) VALUES ('admin','powerbi')
-        `);
 
       } catch (e) {
         console.log("❌ Error asegurando tablas:", e);
