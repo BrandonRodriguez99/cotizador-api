@@ -835,7 +835,7 @@ sql
               ('admin','historial'),('admin','aprobaciones'),('admin','asistencia'),
               ('admin','vehiculos'),('admin','seguridad'),('admin','cursos'),('admin','conceptos'),
               ('admin','coaches'),('admin','modalidades'),('admin','clientes'),('admin','proveedores'),
-              ('admin','unidadesNegocio'),('admin','areasConsumo'),('admin','usuarios'),('admin','permisos'),
+              ('admin','unidadesNegocio'),('admin','areasConsumo'),('admin','usuarios'),('admin','permisos'),('admin','powerbi'),
               ('autorizador1','dashboard'),('autorizador1','mantenimiento'),('autorizador1','inventario'),
               ('autorizador1','ordenesCompra'),('autorizador1','registroProveedores'),('autorizador1','cotizacion'),
               ('autorizador1','historial'),('autorizador1','aprobaciones'),('autorizador1','asistencia'),
