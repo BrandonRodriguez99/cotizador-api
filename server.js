@@ -872,6 +872,12 @@ sql
         `);
         console.log('✅ Tabla PermisosRol asegurada');
 
+        // Migraciones de vistas nuevas (corren siempre, idempotentes)
+        await pool.request().query(`
+          IF NOT EXISTS (SELECT 1 FROM dbo.PermisosRol WHERE Rol='admin' AND Vista='powerbi')
+            INSERT INTO dbo.PermisosRol (Rol, Vista) VALUES ('admin','powerbi')
+        `);
+
       } catch (e) {
         console.log("❌ Error asegurando tablas:", e);
       }
