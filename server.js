@@ -956,6 +956,23 @@ sql
         `);
         console.log('✅ Tabla ControlDiesel asegurada');
 
+        // ── ConfigDiesel ───────────────────────────────────────────────────────
+        await pool.request().query(`
+          IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name='ConfigDiesel' AND schema_id=SCHEMA_ID('dbo'))
+            CREATE TABLE dbo.ConfigDiesel (
+              Id          INT IDENTITY(1,1) PRIMARY KEY,
+              Clave       NVARCHAR(50) NOT NULL UNIQUE,
+              Valor       NVARCHAR(200) NOT NULL,
+              ActualizadoPor NVARCHAR(150) NULL,
+              FechaUpdate DATETIME NOT NULL DEFAULT GETDATE()
+            )
+        `);
+        await pool.request().query(`
+          IF NOT EXISTS (SELECT 1 FROM dbo.ConfigDiesel WHERE Clave='PrecioLitro')
+            INSERT INTO dbo.ConfigDiesel (Clave, Valor) VALUES ('PrecioLitro','0')
+        `);
+        console.log('✅ Tabla ConfigDiesel asegurada');
+
       } catch (e) {
         console.log("❌ Error asegurando tablas:", e);
       }
@@ -6059,6 +6076,30 @@ app.get('/api/diesel/cargas', autenticar, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// PUT /api/diesel/cargas/:id — editar registro (admin)
+app.put('/api/diesel/cargas/:id', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    if (req.usuario.rol !== 'admin') return res.status(403).json({ error: 'Solo admin' });
+    const { vehiculoNombre, fecha, tipo, litros, kmActual, valorPesos, folioTicket, operadorNombre } = req.body;
+    await pool.request()
+      .input('id',   sql.Int,          Number(req.params.id))
+      .input('vn',   sql.NVarChar(200), vehiculoNombre)
+      .input('fe',   sql.Date,          fecha ? new Date(fecha) : null)
+      .input('ti',   sql.NVarChar(10),  tipo)
+      .input('li',   sql.Decimal(10,2), litros)
+      .input('km',   sql.Int,           kmActual)
+      .input('vp',   sql.Decimal(12,2), valorPesos ?? null)
+      .input('fo',   sql.NVarChar(50),  folioTicket ?? null)
+      .input('op',   sql.NVarChar(200), operadorNombre ?? null)
+      .query(`UPDATE dbo.ControlDiesel SET
+        VehiculoNombre=@vn, Fecha=@fe, Tipo=@ti, Litros=@li,
+        KmActual=@km, ValorPesos=@vp, FolioTicket=@fo, OperadorNombre=@op
+        WHERE CargaId=@id AND Eliminado=0`);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // DELETE /api/diesel/cargas/:id — soft delete (admin)
 app.delete('/api/diesel/cargas/:id', autenticar, async (req, res) => {
   try {
@@ -6067,6 +6108,31 @@ app.delete('/api/diesel/cargas/:id', autenticar, async (req, res) => {
     await pool.request().input('id', sql.Int, Number(req.params.id))
       .query(`UPDATE dbo.ControlDiesel SET Eliminado=1 WHERE CargaId=@id`);
     res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/diesel/precio — precio actual del litro
+app.get('/api/diesel/precio', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const r = await pool.request().query(`SELECT Valor FROM dbo.ConfigDiesel WHERE Clave='PrecioLitro'`);
+    const precio = r.recordset[0] ? parseFloat(r.recordset[0].Valor) : 0;
+    res.json({ precio });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// PUT /api/diesel/precio — actualizar precio (admin)
+app.put('/api/diesel/precio', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    if (req.usuario.rol !== 'admin') return res.status(403).json({ error: 'Solo admin' });
+    const precio = parseFloat(req.body.precio);
+    if (isNaN(precio) || precio < 0) return res.status(400).json({ error: 'Precio inválido' });
+    await pool.request()
+      .input('v',  sql.NVarChar(200), String(precio))
+      .input('by', sql.NVarChar(150), req.usuario.nombre)
+      .query(`UPDATE dbo.ConfigDiesel SET Valor=@v, ActualizadoPor=@by, FechaUpdate=GETDATE() WHERE Clave='PrecioLitro'`);
+    res.json({ ok: true, precio });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
