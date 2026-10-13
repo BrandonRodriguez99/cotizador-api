@@ -913,6 +913,11 @@ sql
               FechaCreacion DATETIME DEFAULT GETDATE()
             )
         `);
+        // Columna Resuelto en DVIRPunto (migración no destructiva)
+        await pool.request().query(`
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.DVIRPunto') AND name='Resuelto')
+            ALTER TABLE dbo.DVIRPunto ADD Resuelto BIT NOT NULL DEFAULT 0
+        `);
         // Permiso dvir para admin
         await pool.request().query(`
           IF NOT EXISTS (SELECT 1 FROM dbo.PermisosRol WHERE Rol='admin' AND Vista='dvir')
@@ -5845,7 +5850,8 @@ app.get('/api/dvir', autenticar, async (req, res) => {
     const r = await req2.query(`
       SELECT d.DVIRId, d.VehiculoNombre, d.VIN, d.Ubicacion, d.TipoInspeccion,
              d.EstadoSeguridad, d.Defectos, d.CreadoPor,
-             CONVERT(NVARCHAR(19), d.FechaCreacion, 120) AS FechaCreacion
+             CONVERT(NVARCHAR(19), d.FechaCreacion, 120) AS FechaCreacion,
+             (SELECT COUNT(*) FROM dbo.DVIRPunto WHERE DVIRId=d.DVIRId AND Estado='defecto' AND Resuelto=1) AS Resueltos
       FROM dbo.DVIR d ${where}
       ORDER BY d.FechaCreacion DESC
     `);
@@ -5915,6 +5921,21 @@ app.post('/api/dvir', autenticar, async (req, res) => {
         .query(`INSERT INTO dbo.DVIRPunto (DVIRId,Categoria,Nombre,Estado,FotoUrl,Comentario) VALUES (@did,@cat,@nom,@est,@url,@com)`);
     }
     res.json({ DVIRId: dvirId, ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Marcar/desmarcar un defecto como resuelto
+app.patch('/api/dvir/puntos/:puntoId', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const puntoId = Number(req.params.puntoId);
+    const { resuelto } = req.body;
+    if (typeof resuelto !== 'boolean') return res.status(400).json({ error: 'resuelto (boolean) requerido' });
+    await pool.request()
+      .input('id', sql.Int, puntoId)
+      .input('r',  sql.Bit, resuelto ? 1 : 0)
+      .query(`UPDATE dbo.DVIRPunto SET Resuelto=@r WHERE DVIRPuntoId=@id`);
+    res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
