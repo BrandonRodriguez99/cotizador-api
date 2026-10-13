@@ -872,6 +872,66 @@ sql
         `);
         console.log('✅ Tabla PermisosRol asegurada');
 
+        // ── Módulo DVIR ────────────────────────────────────────────────────────
+        await pool.request().query(`
+          IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name='DVIRVehiculo' AND schema_id=SCHEMA_ID('dbo'))
+            CREATE TABLE dbo.DVIRVehiculo (
+              VehiculoId   INT IDENTITY(1,1) PRIMARY KEY,
+              Nombre       NVARCHAR(200) NOT NULL,
+              VIN          NVARCHAR(50),
+              Matricula    NVARCHAR(50),
+              Activo       BIT DEFAULT 1,
+              FechaCreacion DATETIME DEFAULT GETDATE()
+            )
+        `);
+        await pool.request().query(`
+          IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name='DVIR' AND schema_id=SCHEMA_ID('dbo'))
+            CREATE TABLE dbo.DVIR (
+              DVIRId         INT IDENTITY(1,1) PRIMARY KEY,
+              VehiculoId     INT,
+              VehiculoNombre NVARCHAR(200),
+              VIN            NVARCHAR(50),
+              Ubicacion      NVARCHAR(500),
+              Matricula      NVARCHAR(50),
+              Odometro       DECIMAL(10,2),
+              TipoInspeccion NVARCHAR(20),
+              EstadoSeguridad NVARCHAR(20),
+              Defectos       INT DEFAULT 0,
+              CreadoPor      NVARCHAR(200),
+              FechaCreacion  DATETIME DEFAULT GETDATE(),
+              Eliminado      BIT DEFAULT 0
+            )
+        `);
+        await pool.request().query(`
+          IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name='DVIRFoto' AND schema_id=SCHEMA_ID('dbo'))
+            CREATE TABLE dbo.DVIRFoto (
+              DVIRFotoId   INT IDENTITY(1,1) PRIMARY KEY,
+              DVIRId       INT NOT NULL,
+              Angulo       NVARCHAR(50),
+              FotoUrl      NVARCHAR(1000),
+              FechaCreacion DATETIME DEFAULT GETDATE()
+            )
+        `);
+        await pool.request().query(`
+          IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name='DVIRPunto' AND schema_id=SCHEMA_ID('dbo'))
+            CREATE TABLE dbo.DVIRPunto (
+              DVIRPuntoId  INT IDENTITY(1,1) PRIMARY KEY,
+              DVIRId       INT NOT NULL,
+              Categoria    NVARCHAR(100),
+              Nombre       NVARCHAR(200),
+              Estado       NVARCHAR(10),
+              FotoUrl      NVARCHAR(1000),
+              Comentario   NVARCHAR(2000),
+              FechaCreacion DATETIME DEFAULT GETDATE()
+            )
+        `);
+        // Permiso dvir para admin
+        await pool.request().query(`
+          IF NOT EXISTS (SELECT 1 FROM dbo.PermisosRol WHERE Rol='admin' AND Vista='dvir')
+            INSERT INTO dbo.PermisosRol (Rol, Vista) VALUES ('admin','dvir')
+        `);
+        console.log('✅ Tablas DVIR aseguradas');
+
       } catch (e) {
         console.log("❌ Error asegurando tablas:", e);
       }
@@ -5752,6 +5812,152 @@ app.post('/api/acceso-alumnos', autenticar, async (req, res) => {
       `);
 
     res.json(ins.recordset[0]);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ─── DVIR — Vehículos ────────────────────────────────────────────────────────
+app.get('/api/dvir/vehiculos', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const r = await pool.request().query(`SELECT * FROM dbo.DVIRVehiculo WHERE Activo=1 ORDER BY Nombre`);
+    res.json(r.recordset);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/dvir/vehiculos', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const { nombre, vin, matricula } = req.body;
+    if (!nombre) return res.status(400).json({ error: 'nombre requerido' });
+    const r = await pool.request()
+      .input('n', sql.NVarChar(200), nombre)
+      .input('v', sql.NVarChar(50), vin || null)
+      .input('m', sql.NVarChar(50), matricula || null)
+      .query(`INSERT INTO dbo.DVIRVehiculo (Nombre,VIN,Matricula) OUTPUT INSERTED.* VALUES (@n,@v,@m)`);
+    res.json(r.recordset[0]);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/dvir/vehiculos/:id', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const { nombre, vin, matricula, activo } = req.body;
+    await pool.request()
+      .input('id', sql.Int, Number(req.params.id))
+      .input('n', sql.NVarChar(200), nombre)
+      .input('v', sql.NVarChar(50), vin || null)
+      .input('m', sql.NVarChar(50), matricula || null)
+      .input('a', sql.Bit, activo === false ? 0 : 1)
+      .query(`UPDATE dbo.DVIRVehiculo SET Nombre=@n,VIN=@v,Matricula=@m,Activo=@a WHERE VehiculoId=@id`);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/dvir/vehiculos/:id', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    if (req.usuario.rol !== 'admin') return res.status(403).json({ error: 'Solo admin' });
+    await pool.request().input('id', sql.Int, Number(req.params.id))
+      .query(`UPDATE dbo.DVIRVehiculo SET Activo=0 WHERE VehiculoId=@id`);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ─── DVIR — Inspecciones ─────────────────────────────────────────────────────
+app.get('/api/dvir', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const { vehiculoId, tipo, estado, desde, hasta } = req.query;
+    let where = 'WHERE d.Eliminado=0';
+    const req2 = pool.request();
+    if (vehiculoId) { where += ' AND d.VehiculoId=@vid'; req2.input('vid', sql.Int, Number(vehiculoId)); }
+    if (tipo)       { where += ' AND d.TipoInspeccion=@tipo'; req2.input('tipo', sql.NVarChar(20), tipo); }
+    if (estado)     { where += ' AND d.EstadoSeguridad=@est'; req2.input('est', sql.NVarChar(20), estado); }
+    if (desde)      { where += ' AND CAST(d.FechaCreacion AS DATE)>=@desde'; req2.input('desde', sql.Date, desde); }
+    if (hasta)      { where += ' AND CAST(d.FechaCreacion AS DATE)<=@hasta'; req2.input('hasta', sql.Date, hasta); }
+    const r = await req2.query(`
+      SELECT d.DVIRId, d.VehiculoNombre, d.VIN, d.Ubicacion, d.TipoInspeccion,
+             d.EstadoSeguridad, d.Defectos, d.CreadoPor,
+             CONVERT(NVARCHAR(19), d.FechaCreacion, 120) AS FechaCreacion
+      FROM dbo.DVIR d ${where}
+      ORDER BY d.FechaCreacion DESC
+    `);
+    res.json(r.recordset);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/dvir/:id', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const id = Number(req.params.id);
+    const [dvir, fotos, puntos] = await Promise.all([
+      pool.request().input('id', sql.Int, id)
+        .query(`SELECT * FROM dbo.DVIR WHERE DVIRId=@id AND Eliminado=0`),
+      pool.request().input('id', sql.Int, id)
+        .query(`SELECT * FROM dbo.DVIRFoto WHERE DVIRId=@id ORDER BY DVIRFotoId`),
+      pool.request().input('id', sql.Int, id)
+        .query(`SELECT * FROM dbo.DVIRPunto WHERE DVIRId=@id ORDER BY DVIRPuntoId`),
+    ]);
+    if (!dvir.recordset.length) return res.status(404).json({ error: 'No encontrado' });
+    res.json({ ...dvir.recordset[0], fotos: fotos.recordset, puntos: puntos.recordset });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/dvir', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const { vehiculoId, vehiculoNombre, vin, ubicacion, matricula, odometro,
+            tipoInspeccion, estadoSeguridad, fotos = [], puntos = [] } = req.body;
+    if (!vehiculoNombre || !tipoInspeccion || !estadoSeguridad)
+      return res.status(400).json({ error: 'vehiculoNombre, tipoInspeccion y estadoSeguridad son requeridos' });
+
+    const defectos = puntos.filter(p => p.estado === 'defecto').length;
+    const creadoPor = req.usuario?.nombre || req.usuario?.correo || null;
+
+    const ins = await pool.request()
+      .input('vid',  sql.Int,          vehiculoId || null)
+      .input('vn',   sql.NVarChar(200), vehiculoNombre)
+      .input('vin',  sql.NVarChar(50),  vin || null)
+      .input('ub',   sql.NVarChar(500), ubicacion || null)
+      .input('mat',  sql.NVarChar(50),  matricula || null)
+      .input('od',   sql.Decimal(10,2), odometro || null)
+      .input('ti',   sql.NVarChar(20),  tipoInspeccion)
+      .input('es',   sql.NVarChar(20),  estadoSeguridad)
+      .input('def',  sql.Int,           defectos)
+      .input('cp',   sql.NVarChar(200), creadoPor)
+      .query(`INSERT INTO dbo.DVIR (VehiculoId,VehiculoNombre,VIN,Ubicacion,Matricula,Odometro,TipoInspeccion,EstadoSeguridad,Defectos,CreadoPor)
+              OUTPUT INSERTED.DVIRId
+              VALUES (@vid,@vn,@vin,@ub,@mat,@od,@ti,@es,@def,@cp)`);
+    const dvirId = ins.recordset[0].DVIRId;
+
+    for (const f of fotos) {
+      await pool.request()
+        .input('did', sql.Int,           dvirId)
+        .input('ang', sql.NVarChar(50),  f.angulo)
+        .input('url', sql.NVarChar(1000),f.url)
+        .query(`INSERT INTO dbo.DVIRFoto (DVIRId,Angulo,FotoUrl) VALUES (@did,@ang,@url)`);
+    }
+    for (const p of puntos) {
+      await pool.request()
+        .input('did', sql.Int,            dvirId)
+        .input('cat', sql.NVarChar(100),  p.categoria)
+        .input('nom', sql.NVarChar(200),  p.nombre)
+        .input('est', sql.NVarChar(10),   p.estado)
+        .input('url', sql.NVarChar(1000), p.fotoUrl || null)
+        .input('com', sql.NVarChar(2000), p.comentario || null)
+        .query(`INSERT INTO dbo.DVIRPunto (DVIRId,Categoria,Nombre,Estado,FotoUrl,Comentario) VALUES (@did,@cat,@nom,@est,@url,@com)`);
+    }
+    res.json({ DVIRId: dvirId, ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/dvir/:id', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    if (req.usuario.rol !== 'admin') return res.status(403).json({ error: 'Solo admin' });
+    await pool.request().input('id', sql.Int, Number(req.params.id))
+      .query(`UPDATE dbo.DVIR SET Eliminado=1 WHERE DVIRId=@id`);
+    res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
