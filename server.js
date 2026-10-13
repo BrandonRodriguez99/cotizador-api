@@ -925,6 +925,37 @@ sql
         `);
         console.log('✅ Tablas DVIR aseguradas');
 
+        // ── ControlDiesel ──────────────────────────────────────────────────────
+        await pool.request().query(`
+          IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name='ControlDiesel' AND schema_id=SCHEMA_ID('dbo'))
+            CREATE TABLE dbo.ControlDiesel (
+              CargaId        INT IDENTITY(1,1) PRIMARY KEY,
+              VehiculoId     INT NULL,
+              VehiculoNombre NVARCHAR(200) NOT NULL,
+              Fecha          DATE NOT NULL,
+              Tipo           NVARCHAR(10) NOT NULL DEFAULT 'diesel',
+              Litros         DECIMAL(10,2) NOT NULL,
+              KmActual       INT NOT NULL,
+              KmAnterior     INT NULL,
+              KmRecorridos   INT NULL,
+              Rendimiento    DECIMAL(10,2) NULL,
+              ValorPesos     DECIMAL(12,2) NULL,
+              FolioTicket    NVARCHAR(50) NULL,
+              Terminal       NVARCHAR(200) NULL,
+              OperadorNombre NVARCHAR(200) NULL,
+              UrlFotoTicket  NVARCHAR(1000) NULL,
+              CreadoPor      NVARCHAR(150) NULL,
+              FechaRegistro  DATETIME NOT NULL DEFAULT GETDATE(),
+              Eliminado      BIT NOT NULL DEFAULT 0
+            )
+        `);
+        // Permiso diesel para admin
+        await pool.request().query(`
+          IF NOT EXISTS (SELECT 1 FROM dbo.PermisosRol WHERE Rol='admin' AND Vista='diesel')
+            INSERT INTO dbo.PermisosRol (Rol, Vista) VALUES ('admin','diesel')
+        `);
+        console.log('✅ Tabla ControlDiesel asegurada');
+
       } catch (e) {
         console.log("❌ Error asegurando tablas:", e);
       }
@@ -5945,6 +5976,96 @@ app.delete('/api/dvir/:id', autenticar, async (req, res) => {
     if (req.usuario.rol !== 'admin') return res.status(403).json({ error: 'Solo admin' });
     await pool.request().input('id', sql.Int, Number(req.params.id))
       .query(`UPDATE dbo.DVIR SET Eliminado=1 WHERE DVIRId=@id`);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ─── CONTROL DIESEL ───────────────────────────────────────────────────────────
+
+// POST /api/diesel/cargas — registrar carga, calcula rendimiento automáticamente
+app.post('/api/diesel/cargas', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const { vehiculoId, vehiculoNombre, fecha, tipo, litros, kmActual,
+            valorPesos, folioTicket, terminal, operadorNombre, urlFotoTicket } = req.body;
+    if (!vehiculoNombre || !fecha || !litros || !kmActual)
+      return res.status(400).json({ error: 'Faltan campos requeridos (vehiculoNombre, fecha, litros, kmActual)' });
+
+    // Buscar carga anterior del mismo vehículo (mismo tipo) para calcular rendimiento
+    const prevRes = await pool.request()
+      .input('vnombre', sql.NVarChar(200), vehiculoNombre)
+      .input('vtipo',   sql.NVarChar(10),  tipo || 'diesel')
+      .query(`
+        SELECT TOP 1 KmActual FROM dbo.ControlDiesel
+        WHERE VehiculoNombre=@vnombre AND Tipo=@vtipo AND Eliminado=0
+        ORDER BY Fecha DESC, CargaId DESC
+      `);
+    const kmAnterior   = prevRes.recordset[0]?.KmActual ?? null;
+    const kmRecorridos = kmAnterior != null ? (Number(kmActual) - kmAnterior) : null;
+    const rendimiento  = (kmRecorridos != null && Number(litros) > 0)
+      ? Math.round((kmRecorridos / Number(litros)) * 100) / 100
+      : null;
+
+    const r = await pool.request()
+      .input('vid',   sql.Int,            vehiculoId ? Number(vehiculoId) : null)
+      .input('vnom',  sql.NVarChar(200),  vehiculoNombre)
+      .input('fecha', sql.Date,           new Date(fecha))
+      .input('tipo',  sql.NVarChar(10),   tipo || 'diesel')
+      .input('lts',   sql.Decimal(10,2),  Number(litros))
+      .input('kma',   sql.Int,            Number(kmActual))
+      .input('kmant', sql.Int,            kmAnterior)
+      .input('kmrec', sql.Int,            kmRecorridos)
+      .input('rend',  sql.Decimal(10,2),  rendimiento)
+      .input('valor', sql.Decimal(12,2),  valorPesos ? Number(valorPesos) : null)
+      .input('folio', sql.NVarChar(50),   folioTicket || null)
+      .input('term',  sql.NVarChar(200),  terminal || null)
+      .input('oper',  sql.NVarChar(200),  operadorNombre || null)
+      .input('foto',  sql.NVarChar(1000), urlFotoTicket || null)
+      .input('creador', sql.NVarChar(150), req.usuario?.nombre || null)
+      .query(`
+        INSERT INTO dbo.ControlDiesel
+          (VehiculoId,VehiculoNombre,Fecha,Tipo,Litros,KmActual,KmAnterior,
+           KmRecorridos,Rendimiento,ValorPesos,FolioTicket,Terminal,
+           OperadorNombre,UrlFotoTicket,CreadoPor)
+        OUTPUT inserted.CargaId
+        VALUES (@vid,@vnom,@fecha,@tipo,@lts,@kma,@kmant,
+                @kmrec,@rend,@valor,@folio,@term,
+                @oper,@foto,@creador)
+      `);
+    res.json({ cargaId: r.recordset[0].CargaId, rendimiento, kmRecorridos });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/diesel/cargas — listar con filtros opcionales
+app.get('/api/diesel/cargas', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const { vehiculoNombre, tipo, desde, hasta } = req.query;
+    const r = pool.request();
+    const conds = ["Eliminado=0"];
+    if (vehiculoNombre) { r.input('vn', sql.NVarChar(200), `%${vehiculoNombre}%`); conds.push("VehiculoNombre LIKE @vn"); }
+    if (tipo)           { r.input('tp', sql.NVarChar(10),  tipo);                  conds.push("Tipo=@tp"); }
+    if (desde)          { r.input('de', sql.Date, new Date(desde));                conds.push("Fecha>=@de"); }
+    if (hasta)          { r.input('ha', sql.Date, new Date(hasta));                conds.push("Fecha<=@ha"); }
+    const where = conds.join(' AND ');
+    const result = await r.query(`
+      SELECT CargaId,VehiculoId,VehiculoNombre,Fecha,Tipo,Litros,KmActual,
+             KmAnterior,KmRecorridos,Rendimiento,ValorPesos,FolioTicket,
+             Terminal,OperadorNombre,UrlFotoTicket,CreadoPor,FechaRegistro
+      FROM dbo.ControlDiesel WHERE ${where}
+      ORDER BY Fecha DESC, CargaId DESC
+    `);
+    res.json(result.recordset);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// DELETE /api/diesel/cargas/:id — soft delete (admin)
+app.delete('/api/diesel/cargas/:id', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    if (req.usuario.rol !== 'admin') return res.status(403).json({ error: 'Solo admin' });
+    await pool.request().input('id', sql.Int, Number(req.params.id))
+      .query(`UPDATE dbo.ControlDiesel SET Eliminado=1 WHERE CargaId=@id`);
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
