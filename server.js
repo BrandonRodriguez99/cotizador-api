@@ -6076,11 +6076,12 @@ app.get('/api/diesel/cargas', autenticar, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// PUT /api/diesel/cargas/:id — editar registro (admin)
+// PUT /api/diesel/cargas/:id — editar registro (admin / encargado_vehiculos)
 app.put('/api/diesel/cargas/:id', autenticar, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
-    if (req.usuario.rol !== 'admin') return res.status(403).json({ error: 'Solo admin' });
+    const { rol } = req.usuario;
+    if (rol !== 'admin' && rol !== 'encargado_vehiculos') return res.status(403).json({ error: 'Sin permiso' });
     const { vehiculoNombre, fecha, tipo, litros, kmActual, valorPesos, folioTicket, operadorNombre } = req.body;
     await pool.request()
       .input('id',   sql.Int,          Number(req.params.id))
@@ -6121,11 +6122,12 @@ app.get('/api/diesel/precio', autenticar, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// PUT /api/diesel/precio — actualizar precio (admin)
+// PUT /api/diesel/precio — actualizar precio (admin / encargado_vehiculos)
 app.put('/api/diesel/precio', autenticar, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
-    if (req.usuario.rol !== 'admin') return res.status(403).json({ error: 'Solo admin' });
+    const { rol } = req.usuario;
+    if (rol !== 'admin' && rol !== 'encargado_vehiculos') return res.status(403).json({ error: 'Sin permiso' });
     const precio = parseFloat(req.body.precio);
     if (isNaN(precio) || precio < 0) return res.status(400).json({ error: 'Precio inválido' });
     await pool.request()
