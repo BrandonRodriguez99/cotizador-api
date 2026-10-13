@@ -6099,21 +6099,68 @@ app.put('/api/diesel/cargas/:id', autenticar, async (req, res) => {
     if (!ensurePool(res)) return;
     const { rol } = req.usuario;
     if (rol !== 'admin' && rol !== 'encargado_vehiculos') return res.status(403).json({ error: 'Sin permiso' });
+    const id = Number(req.params.id);
     const { vehiculoNombre, fecha, tipo, litros, kmActual, valorPesos, folioTicket, operadorNombre } = req.body;
+
+    // Buscar registro anterior (mismo vehículo+tipo, excluyendo el actual)
+    const prevRes = await pool.request()
+      .input('vn2', sql.NVarChar(200), vehiculoNombre)
+      .input('ti2', sql.NVarChar(10),  tipo)
+      .input('id2', sql.Int,           id)
+      .query(`SELECT TOP 1 CargaId, KmActual FROM dbo.ControlDiesel
+              WHERE VehiculoNombre=@vn2 AND Tipo=@ti2 AND CargaId<>@id2 AND Eliminado=0
+                AND CargaId < @id2
+              ORDER BY Fecha DESC, CargaId DESC`);
+    const kmAnterior   = prevRes.recordset[0]?.KmActual ?? null;
+    const kmRecorridos = kmAnterior != null ? (Number(kmActual) - kmAnterior) : null;
+    const rendimiento  = (kmRecorridos != null && Number(litros) > 0)
+      ? Math.round((kmRecorridos / Number(litros)) * 100) / 100 : null;
+
     await pool.request()
-      .input('id',   sql.Int,          Number(req.params.id))
+      .input('id',   sql.Int,           id)
       .input('vn',   sql.NVarChar(200), vehiculoNombre)
       .input('fe',   sql.Date,          fecha ? new Date(fecha) : null)
       .input('ti',   sql.NVarChar(10),  tipo)
       .input('li',   sql.Decimal(10,2), litros)
       .input('km',   sql.Int,           kmActual)
+      .input('kma',  sql.Int,           kmAnterior)
+      .input('kmr',  sql.Int,           kmRecorridos)
+      .input('ren',  sql.Decimal(10,2), rendimiento)
       .input('vp',   sql.Decimal(12,2), valorPesos ?? null)
       .input('fo',   sql.NVarChar(50),  folioTicket ?? null)
       .input('op',   sql.NVarChar(200), operadorNombre ?? null)
       .query(`UPDATE dbo.ControlDiesel SET
         VehiculoNombre=@vn, Fecha=@fe, Tipo=@ti, Litros=@li,
-        KmActual=@km, ValorPesos=@vp, FolioTicket=@fo, OperadorNombre=@op
+        KmActual=@km, KmAnterior=@kma, KmRecorridos=@kmr, Rendimiento=@ren,
+        ValorPesos=@vp, FolioTicket=@fo, OperadorNombre=@op
         WHERE CargaId=@id AND Eliminado=0`);
+
+    // Recalcular el registro inmediatamente posterior (si existe)
+    const nextRes = await pool.request()
+      .input('vn3', sql.NVarChar(200), vehiculoNombre)
+      .input('ti3', sql.NVarChar(10),  tipo)
+      .input('id3', sql.Int,           id)
+      .query(`SELECT TOP 1 CargaId, Litros FROM dbo.ControlDiesel
+              WHERE VehiculoNombre=@vn3 AND Tipo=@ti3 AND CargaId>@id3 AND Eliminado=0
+              ORDER BY CargaId ASC`);
+    if (nextRes.recordset[0]) {
+      const next = nextRes.recordset[0];
+      const kmrNext  = Number(kmActual) > 0 ? null : null; // se recalcula abajo
+      const nextKmActualRes = await pool.request()
+        .input('nid', sql.Int, next.CargaId)
+        .query(`SELECT KmActual FROM dbo.ControlDiesel WHERE CargaId=@nid`);
+      const nextKmActual  = nextKmActualRes.recordset[0]?.KmActual ?? null;
+      const nextKmRec     = nextKmActual != null ? (nextKmActual - Number(kmActual)) : null;
+      const nextRend      = (nextKmRec != null && Number(next.Litros) > 0)
+        ? Math.round((nextKmRec / Number(next.Litros)) * 100) / 100 : null;
+      await pool.request()
+        .input('nid2', sql.Int,          next.CargaId)
+        .input('nkma', sql.Int,          Number(kmActual))
+        .input('nkmr', sql.Int,          nextKmRec)
+        .input('nren', sql.Decimal(10,2),nextRend)
+        .query(`UPDATE dbo.ControlDiesel SET KmAnterior=@nkma, KmRecorridos=@nkmr, Rendimiento=@nren WHERE CargaId=@nid2`);
+    }
+
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
