@@ -968,8 +968,25 @@ sql
             )
         `);
         await pool.request().query(`
-          IF NOT EXISTS (SELECT 1 FROM dbo.ConfigDiesel WHERE Clave='PrecioLitro')
-            INSERT INTO dbo.ConfigDiesel (Clave, Valor) VALUES ('PrecioLitro','0')
+          IF NOT EXISTS (SELECT 1 FROM dbo.ConfigDiesel WHERE Clave='PrecioDiesel')
+            INSERT INTO dbo.ConfigDiesel (Clave, Valor) VALUES ('PrecioDiesel','0')
+        `);
+        await pool.request().query(`
+          IF NOT EXISTS (SELECT 1 FROM dbo.ConfigDiesel WHERE Clave='PrecioGasolina')
+            INSERT INTO dbo.ConfigDiesel (Clave, Valor) VALUES ('PrecioGasolina','0')
+        `);
+        await pool.request().query(`
+          IF NOT EXISTS (SELECT 1 FROM dbo.ConfigDiesel WHERE Clave='PrecioUrea')
+            INSERT INTO dbo.ConfigDiesel (Clave, Valor) VALUES ('PrecioUrea','0')
+        `);
+        // Migrar clave antigua si existe
+        await pool.request().query(`
+          IF EXISTS (SELECT 1 FROM dbo.ConfigDiesel WHERE Clave='PrecioLitro')
+          BEGIN
+            UPDATE dbo.ConfigDiesel SET Clave='PrecioDiesel'
+              WHERE Clave='PrecioLitro' AND NOT EXISTS (SELECT 1 FROM dbo.ConfigDiesel WHERE Clave='PrecioDiesel')
+            DELETE FROM dbo.ConfigDiesel WHERE Clave='PrecioLitro'
+          END
         `);
         console.log('✅ Tabla ConfigDiesel asegurada');
 
@@ -6112,29 +6129,42 @@ app.delete('/api/diesel/cargas/:id', autenticar, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// GET /api/diesel/precio — precio actual del litro
+// GET /api/diesel/precio — precios por tipo de combustible
 app.get('/api/diesel/precio', autenticar, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
-    const r = await pool.request().query(`SELECT Valor FROM dbo.ConfigDiesel WHERE Clave='PrecioLitro'`);
-    const precio = r.recordset[0] ? parseFloat(r.recordset[0].Valor) : 0;
-    res.json({ precio });
+    const r = await pool.request().query(
+      `SELECT Clave, Valor FROM dbo.ConfigDiesel WHERE Clave IN ('PrecioDiesel','PrecioGasolina','PrecioUrea')`
+    );
+    const map = {};
+    r.recordset.forEach(row => { map[row.Clave] = parseFloat(row.Valor) || 0; });
+    res.json({
+      diesel:   map['PrecioDiesel']   ?? 0,
+      gasolina: map['PrecioGasolina'] ?? 0,
+      urea:     map['PrecioUrea']     ?? 0,
+    });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// PUT /api/diesel/precio — actualizar precio (admin / encargado_vehiculos)
+// PUT /api/diesel/precio — actualizar precios (admin / encargado_vehiculos)
 app.put('/api/diesel/precio', autenticar, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
     const { rol } = req.usuario;
     if (rol !== 'admin' && rol !== 'encargado_vehiculos') return res.status(403).json({ error: 'Sin permiso' });
-    const precio = parseFloat(req.body.precio);
-    if (isNaN(precio) || precio < 0) return res.status(400).json({ error: 'Precio inválido' });
-    await pool.request()
-      .input('v',  sql.NVarChar(200), String(precio))
-      .input('by', sql.NVarChar(150), req.usuario.nombre)
-      .query(`UPDATE dbo.ConfigDiesel SET Valor=@v, ActualizadoPor=@by, FechaUpdate=GETDATE() WHERE Clave='PrecioLitro'`);
-    res.json({ ok: true, precio });
+    const claves = { diesel: 'PrecioDiesel', gasolina: 'PrecioGasolina', urea: 'PrecioUrea' };
+    for (const [tipo, clave] of Object.entries(claves)) {
+      if (req.body[tipo] !== undefined) {
+        const val = parseFloat(req.body[tipo]);
+        if (isNaN(val) || val < 0) return res.status(400).json({ error: `Precio inválido para ${tipo}` });
+        await pool.request()
+          .input('v',  sql.NVarChar(200), String(val))
+          .input('by', sql.NVarChar(150), req.usuario.nombre)
+          .input('cl', sql.NVarChar(50),  clave)
+          .query(`UPDATE dbo.ConfigDiesel SET Valor=@v, ActualizadoPor=@by, FechaUpdate=GETDATE() WHERE Clave=@cl`);
+      }
+    }
+    res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
