@@ -874,17 +874,6 @@ sql
 
         // ── Módulo DVIR ────────────────────────────────────────────────────────
         await pool.request().query(`
-          IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name='DVIRVehiculo' AND schema_id=SCHEMA_ID('dbo'))
-            CREATE TABLE dbo.DVIRVehiculo (
-              VehiculoId   INT IDENTITY(1,1) PRIMARY KEY,
-              Nombre       NVARCHAR(200) NOT NULL,
-              VIN          NVARCHAR(50),
-              Matricula    NVARCHAR(50),
-              Activo       BIT DEFAULT 1,
-              FechaCreacion DATETIME DEFAULT GETDATE()
-            )
-        `);
-        await pool.request().query(`
           IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name='DVIR' AND schema_id=SCHEMA_ID('dbo'))
             CREATE TABLE dbo.DVIR (
               DVIRId         INT IDENTITY(1,1) PRIMARY KEY,
@@ -5815,51 +5804,16 @@ app.post('/api/acceso-alumnos', autenticar, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ─── DVIR — Vehículos ────────────────────────────────────────────────────────
+// ─── DVIR — Vehículos (usa catálogo existente dbo.Vehiculos) ─────────────────
 app.get('/api/dvir/vehiculos', autenticar, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
-    const r = await pool.request().query(`SELECT * FROM dbo.DVIRVehiculo WHERE Activo=1 ORDER BY Nombre`);
+    const r = await pool.request().query(`
+      SELECT VehiculoId, Marca, Modelo, Placa, Año, Color,
+             LTRIM(RTRIM(Marca + ' ' + Modelo + ' (' + Placa + ')')) AS Nombre
+      FROM dbo.Vehiculos WHERE Activo=1 ORDER BY Marca, Modelo
+    `);
     res.json(r.recordset);
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.post('/api/dvir/vehiculos', autenticar, async (req, res) => {
-  try {
-    if (!ensurePool(res)) return;
-    const { nombre, vin, matricula } = req.body;
-    if (!nombre) return res.status(400).json({ error: 'nombre requerido' });
-    const r = await pool.request()
-      .input('n', sql.NVarChar(200), nombre)
-      .input('v', sql.NVarChar(50), vin || null)
-      .input('m', sql.NVarChar(50), matricula || null)
-      .query(`INSERT INTO dbo.DVIRVehiculo (Nombre,VIN,Matricula) OUTPUT INSERTED.* VALUES (@n,@v,@m)`);
-    res.json(r.recordset[0]);
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.put('/api/dvir/vehiculos/:id', autenticar, async (req, res) => {
-  try {
-    if (!ensurePool(res)) return;
-    const { nombre, vin, matricula, activo } = req.body;
-    await pool.request()
-      .input('id', sql.Int, Number(req.params.id))
-      .input('n', sql.NVarChar(200), nombre)
-      .input('v', sql.NVarChar(50), vin || null)
-      .input('m', sql.NVarChar(50), matricula || null)
-      .input('a', sql.Bit, activo === false ? 0 : 1)
-      .query(`UPDATE dbo.DVIRVehiculo SET Nombre=@n,VIN=@v,Matricula=@m,Activo=@a WHERE VehiculoId=@id`);
-    res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.delete('/api/dvir/vehiculos/:id', autenticar, async (req, res) => {
-  try {
-    if (!ensurePool(res)) return;
-    if (req.usuario.rol !== 'admin') return res.status(403).json({ error: 'Solo admin' });
-    await pool.request().input('id', sql.Int, Number(req.params.id))
-      .query(`UPDATE dbo.DVIRVehiculo SET Activo=0 WHERE VehiculoId=@id`);
-    res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
