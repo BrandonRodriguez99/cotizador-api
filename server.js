@@ -4817,6 +4817,20 @@ app.post('/api/upload/foto-rondin', autenticar, async (req, res) => {
   }
 });
 
+app.post('/api/upload/foto-dvir', autenticar, async (req, res) => {
+  try {
+    const { base64 } = req.body;
+    if (!base64) return res.status(400).json({ error: 'No se recibió imagen' });
+    const result = await cloudinary.uploader.upload(base64, {
+      folder: 'dvir',
+      resource_type: 'image',
+    });
+    res.json({ url: result.secure_url });
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'No se pudo subir la imagen' });
+  }
+});
+
 // ── Administración de permisos ────────────────────────────────────────────────
 app.get('/api/admin/permisos', autenticar, async (req, res) => {
   if (req.usuario.rol !== 'admin') return res.status(403).json({ error: 'Sin acceso' });
