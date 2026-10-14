@@ -6607,6 +6607,20 @@ app.get('/api/formularios/:id/respuestas', autenticar, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// DELETE /api/formularios/respuestas/:rid — eliminar una respuesta (admin)
+app.delete('/api/formularios/respuestas/:rid', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    if (req.usuario.rol !== 'admin') return res.status(403).json({ error: 'Solo admin' });
+    const rid = Number(req.params.rid);
+    await pool.request().input('rid', sql.Int, rid)
+      .query(`DELETE FROM dbo.FormRespuestaValores WHERE RespuestaId=@rid`);
+    await pool.request().input('rid', sql.Int, rid)
+      .query(`DELETE FROM dbo.FormRespuestas WHERE RespuestaId=@rid`);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ─── SERVER ───────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => console.log(`🚀 Servidor corriendo en puerto ${PORT}`));
