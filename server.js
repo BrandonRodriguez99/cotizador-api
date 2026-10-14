@@ -871,6 +871,12 @@ sql
         `);
         console.log('✅ Tabla PermisosRol asegurada');
 
+        // ── Migración: vistas nuevas para admin ────────────────────────────────
+        await pool.request().query(`
+          IF NOT EXISTS (SELECT 1 FROM dbo.PermisosRol WHERE Rol='admin' AND Vista='formularios')
+            INSERT INTO dbo.PermisosRol (Rol, Vista) VALUES ('admin','formularios')
+        `);
+
         // ── Módulo DVIR ────────────────────────────────────────────────────────
         await pool.request().query(`
           IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name='DVIR' AND schema_id=SCHEMA_ID('dbo'))
