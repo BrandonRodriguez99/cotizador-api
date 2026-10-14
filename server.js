@@ -1522,7 +1522,7 @@ app.get("/api/auth/me", autenticar, async (req, res) => {
     const newToken = jwt.sign(
       { id: u.UsuarioId, correo: u.Correo, nombre: u.Nombre, rol: u.Rol },
       JWT_SECRET,
-      { expiresIn: "8h" }
+      { expiresIn: "30d" }
     );
     const vistas = await getVistasDeRol(u.Rol);
     res.json({ token: newToken, usuario: { id: u.UsuarioId, correo: u.Correo, nombre: u.Nombre, rol: u.Rol, debeReiniciarPass: u.DebeReiniciarPass }, vistas });
@@ -1552,7 +1552,7 @@ app.post("/api/auth/login", async (req, res) => {
     const token = jwt.sign(
       { id: user.UsuarioId, correo: user.Correo, nombre: user.Nombre, rol: user.Rol },
       JWT_SECRET,
-      { expiresIn: "8h" }
+      { expiresIn: "30d" }
     );
 
     const vistas = await getVistasDeRol(user.Rol);
