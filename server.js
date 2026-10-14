@@ -990,6 +990,74 @@ sql
         `);
         console.log('✅ Tabla ConfigDiesel asegurada');
 
+        // ── Formularios ──────────────────────────────────────────────────────────
+        await pool.request().query(`
+          IF OBJECT_ID('dbo.Formularios','U') IS NULL
+          BEGIN
+            CREATE TABLE dbo.Formularios (
+              FormularioId      INT IDENTITY(1,1) PRIMARY KEY,
+              Nombre            NVARCHAR(200) NOT NULL,
+              Descripcion       NVARCHAR(500) NULL,
+              Activo            BIT           NOT NULL DEFAULT 0,
+              FechaCreacion     DATETIME2     NOT NULL DEFAULT SYSUTCDATETIME(),
+              FechaActualizacion DATETIME2    NULL
+            );
+          END
+
+          IF OBJECT_ID('dbo.FormSecciones','U') IS NULL
+          BEGIN
+            CREATE TABLE dbo.FormSecciones (
+              SeccionId     INT IDENTITY(1,1) PRIMARY KEY,
+              FormularioId  INT           NOT NULL,
+              Titulo        NVARCHAR(200) NOT NULL DEFAULT '',
+              Orden         INT           NOT NULL DEFAULT 0
+            );
+          END
+
+          IF OBJECT_ID('dbo.FormPreguntas','U') IS NULL
+          BEGIN
+            CREATE TABLE dbo.FormPreguntas (
+              PreguntaId     INT IDENTITY(1,1) PRIMARY KEY,
+              SeccionId      INT           NOT NULL,
+              Texto          NVARCHAR(500) NOT NULL,
+              TipoRespuesta  NVARCHAR(50)  NOT NULL DEFAULT 'si_no_na',
+              Requerida      BIT           NOT NULL DEFAULT 0,
+              Orden          INT           NOT NULL DEFAULT 0
+            );
+          END
+
+          IF OBJECT_ID('dbo.FormOpciones','U') IS NULL
+          BEGIN
+            CREATE TABLE dbo.FormOpciones (
+              OpcionId   INT IDENTITY(1,1) PRIMARY KEY,
+              PreguntaId INT           NOT NULL,
+              Texto      NVARCHAR(200) NOT NULL,
+              Orden      INT           NOT NULL DEFAULT 0
+            );
+          END
+
+          IF OBJECT_ID('dbo.FormRespuestas','U') IS NULL
+          BEGIN
+            CREATE TABLE dbo.FormRespuestas (
+              RespuestaId    INT IDENTITY(1,1) PRIMARY KEY,
+              FormularioId   INT           NOT NULL,
+              OperadorNombre NVARCHAR(200) NOT NULL,
+              FechaEnvio     DATETIME2     NOT NULL DEFAULT SYSUTCDATETIME()
+            );
+          END
+
+          IF OBJECT_ID('dbo.FormRespuestaValores','U') IS NULL
+          BEGIN
+            CREATE TABLE dbo.FormRespuestaValores (
+              ValorId     INT IDENTITY(1,1) PRIMARY KEY,
+              RespuestaId INT           NOT NULL,
+              PreguntaId  INT           NOT NULL,
+              Valor       NVARCHAR(MAX) NULL
+            );
+          END
+        `);
+        console.log('✅ Tablas Formularios aseguradas');
+
       } catch (e) {
         console.log("❌ Error asegurando tablas:", e);
       }
@@ -6212,6 +6280,302 @@ app.put('/api/diesel/precio', autenticar, async (req, res) => {
       }
     }
     res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// FORMULARIOS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Función auxiliar para cargar un formulario completo (secciones + preguntas + opciones)
+async function cargarFormularioCompleto(formId) {
+  const [fRes, sRes, pRes, oRes] = await Promise.all([
+    pool.request().input('id', sql.Int, formId)
+      .query(`SELECT * FROM dbo.Formularios WHERE FormularioId=@id`),
+    pool.request().input('id', sql.Int, formId)
+      .query(`SELECT * FROM dbo.FormSecciones WHERE FormularioId=@id ORDER BY Orden`),
+    pool.request().input('id', sql.Int, formId)
+      .query(`SELECT p.* FROM dbo.FormPreguntas p
+              JOIN dbo.FormSecciones s ON s.SeccionId=p.SeccionId
+              WHERE s.FormularioId=@id ORDER BY p.SeccionId, p.Orden`),
+    pool.request().input('id', sql.Int, formId)
+      .query(`SELECT o.* FROM dbo.FormOpciones o
+              JOIN dbo.FormPreguntas p ON p.PreguntaId=o.PreguntaId
+              JOIN dbo.FormSecciones s ON s.SeccionId=p.SeccionId
+              WHERE s.FormularioId=@id ORDER BY o.PreguntaId, o.Orden`),
+  ]);
+  const form = fRes.recordset[0];
+  if (!form) return null;
+  const opcionesByPregunta = {};
+  oRes.recordset.forEach(o => {
+    if (!opcionesByPregunta[o.PreguntaId]) opcionesByPregunta[o.PreguntaId] = [];
+    opcionesByPregunta[o.PreguntaId].push(o);
+  });
+  const preguntasBySeccion = {};
+  pRes.recordset.forEach(p => {
+    if (!preguntasBySeccion[p.SeccionId]) preguntasBySeccion[p.SeccionId] = [];
+    preguntasBySeccion[p.SeccionId].push({ ...p, opciones: opcionesByPregunta[p.PreguntaId] || [] });
+  });
+  form.secciones = sRes.recordset.map(s => ({ ...s, preguntas: preguntasBySeccion[s.SeccionId] || [] }));
+  return form;
+}
+
+// GET /api/formularios — lista todos (admin/web)
+app.get('/api/formularios', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const r = await pool.request().query(
+      `SELECT FormularioId, Nombre, Descripcion, Activo, FechaCreacion FROM dbo.Formularios ORDER BY FechaCreacion DESC`
+    );
+    res.json(r.recordset);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/formularios/activos — solo activos (app)
+app.get('/api/formularios/activos', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const r = await pool.request().query(
+      `SELECT FormularioId, Nombre, Descripcion FROM dbo.Formularios WHERE Activo=1 ORDER BY Nombre`
+    );
+    res.json(r.recordset);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/formularios/:id — detalle completo
+app.get('/api/formularios/:id', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const form = await cargarFormularioCompleto(Number(req.params.id));
+    if (!form) return res.status(404).json({ error: 'Formulario no encontrado' });
+    res.json(form);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/formularios — crear (admin)
+app.post('/api/formularios', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    if (req.usuario.rol !== 'admin') return res.status(403).json({ error: 'Solo admin' });
+    const { nombre, descripcion, secciones = [] } = req.body;
+    if (!nombre) return res.status(400).json({ error: 'Nombre requerido' });
+
+    const fRes = await pool.request()
+      .input('n', sql.NVarChar(200), nombre)
+      .input('d', sql.NVarChar(500), descripcion || null)
+      .query(`INSERT INTO dbo.Formularios(Nombre,Descripcion) OUTPUT INSERTED.FormularioId VALUES(@n,@d)`);
+    const formId = fRes.recordset[0].FormularioId;
+
+    for (let si = 0; si < secciones.length; si++) {
+      const sec = secciones[si];
+      const sRes = await pool.request()
+        .input('fid', sql.Int, formId)
+        .input('t', sql.NVarChar(200), sec.titulo || '')
+        .input('o', sql.Int, si)
+        .query(`INSERT INTO dbo.FormSecciones(FormularioId,Titulo,Orden) OUTPUT INSERTED.SeccionId VALUES(@fid,@t,@o)`);
+      const secId = sRes.recordset[0].SeccionId;
+
+      for (let pi = 0; pi < (sec.preguntas || []).length; pi++) {
+        const preg = sec.preguntas[pi];
+        const pRes = await pool.request()
+          .input('sid', sql.Int, secId)
+          .input('tx', sql.NVarChar(500), preg.texto || '')
+          .input('tr', sql.NVarChar(50), preg.tipoRespuesta || 'si_no_na')
+          .input('req', sql.Bit, preg.requerida ? 1 : 0)
+          .input('or', sql.Int, pi)
+          .query(`INSERT INTO dbo.FormPreguntas(SeccionId,Texto,TipoRespuesta,Requerida,Orden) OUTPUT INSERTED.PreguntaId VALUES(@sid,@tx,@tr,@req,@or)`);
+        const pregId = pRes.recordset[0].PreguntaId;
+
+        for (let oi = 0; oi < (preg.opciones || []).length; oi++) {
+          await pool.request()
+            .input('pid', sql.Int, pregId)
+            .input('t', sql.NVarChar(200), preg.opciones[oi].texto || '')
+            .input('o', sql.Int, oi)
+            .query(`INSERT INTO dbo.FormOpciones(PreguntaId,Texto,Orden) VALUES(@pid,@t,@o)`);
+        }
+      }
+    }
+
+    const form = await cargarFormularioCompleto(formId);
+    res.status(201).json(form);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// PUT /api/formularios/:id — reemplazar completo (admin)
+app.put('/api/formularios/:id', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    if (req.usuario.rol !== 'admin') return res.status(403).json({ error: 'Solo admin' });
+    const formId = Number(req.params.id);
+    const { nombre, descripcion, activo, secciones = [] } = req.body;
+    if (!nombre) return res.status(400).json({ error: 'Nombre requerido' });
+
+    // Verificar que existe
+    const chk = await pool.request().input('id', sql.Int, formId)
+      .query(`SELECT FormularioId FROM dbo.Formularios WHERE FormularioId=@id`);
+    if (!chk.recordset.length) return res.status(404).json({ error: 'No encontrado' });
+
+    // Actualizar encabezado
+    await pool.request()
+      .input('id', sql.Int, formId)
+      .input('n', sql.NVarChar(200), nombre)
+      .input('d', sql.NVarChar(500), descripcion || null)
+      .input('a', sql.Bit, activo ? 1 : 0)
+      .query(`UPDATE dbo.Formularios SET Nombre=@n,Descripcion=@d,Activo=@a,FechaActualizacion=SYSUTCDATETIME() WHERE FormularioId=@id`);
+
+    // Borrar secciones/preguntas/opciones previas (sin CASCADE, borrar en orden)
+    const oldSecs = await pool.request().input('id', sql.Int, formId)
+      .query(`SELECT SeccionId FROM dbo.FormSecciones WHERE FormularioId=@id`);
+    for (const sec of oldSecs.recordset) {
+      const oldPregs = await pool.request().input('sid', sql.Int, sec.SeccionId)
+        .query(`SELECT PreguntaId FROM dbo.FormPreguntas WHERE SeccionId=@sid`);
+      for (const p of oldPregs.recordset) {
+        await pool.request().input('pid', sql.Int, p.PreguntaId)
+          .query(`DELETE FROM dbo.FormOpciones WHERE PreguntaId=@pid`);
+      }
+      await pool.request().input('sid', sql.Int, sec.SeccionId)
+        .query(`DELETE FROM dbo.FormPreguntas WHERE SeccionId=@sid`);
+    }
+    await pool.request().input('id', sql.Int, formId)
+      .query(`DELETE FROM dbo.FormSecciones WHERE FormularioId=@id`);
+
+    // Reinsertar secciones / preguntas / opciones
+    for (let si = 0; si < secciones.length; si++) {
+      const sec = secciones[si];
+      const sRes = await pool.request()
+        .input('fid', sql.Int, formId)
+        .input('t', sql.NVarChar(200), sec.titulo || '')
+        .input('o', sql.Int, si)
+        .query(`INSERT INTO dbo.FormSecciones(FormularioId,Titulo,Orden) OUTPUT INSERTED.SeccionId VALUES(@fid,@t,@o)`);
+      const secId = sRes.recordset[0].SeccionId;
+
+      for (let pi = 0; pi < (sec.preguntas || []).length; pi++) {
+        const preg = sec.preguntas[pi];
+        const pRes = await pool.request()
+          .input('sid', sql.Int, secId)
+          .input('tx', sql.NVarChar(500), preg.texto || '')
+          .input('tr', sql.NVarChar(50), preg.tipoRespuesta || 'si_no_na')
+          .input('req', sql.Bit, preg.requerida ? 1 : 0)
+          .input('or', sql.Int, pi)
+          .query(`INSERT INTO dbo.FormPreguntas(SeccionId,Texto,TipoRespuesta,Requerida,Orden) OUTPUT INSERTED.PreguntaId VALUES(@sid,@tx,@tr,@req,@or)`);
+        const pregId = pRes.recordset[0].PreguntaId;
+
+        for (let oi = 0; oi < (preg.opciones || []).length; oi++) {
+          await pool.request()
+            .input('pid', sql.Int, pregId)
+            .input('t', sql.NVarChar(200), preg.opciones[oi].texto || '')
+            .input('o', sql.Int, oi)
+            .query(`INSERT INTO dbo.FormOpciones(PreguntaId,Texto,Orden) VALUES(@pid,@t,@o)`);
+        }
+      }
+    }
+
+    const form = await cargarFormularioCompleto(formId);
+    res.json(form);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// PATCH /api/formularios/:id/activo — toggle activo (admin)
+app.patch('/api/formularios/:id/activo', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    if (req.usuario.rol !== 'admin') return res.status(403).json({ error: 'Solo admin' });
+    const { activo } = req.body;
+    await pool.request()
+      .input('id', sql.Int, Number(req.params.id))
+      .input('a', sql.Bit, activo ? 1 : 0)
+      .query(`UPDATE dbo.Formularios SET Activo=@a,FechaActualizacion=SYSUTCDATETIME() WHERE FormularioId=@id`);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// DELETE /api/formularios/:id (admin)
+app.delete('/api/formularios/:id', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    if (req.usuario.rol !== 'admin') return res.status(403).json({ error: 'Solo admin' });
+    const formId = Number(req.params.id);
+
+    const secs = await pool.request().input('id', sql.Int, formId)
+      .query(`SELECT SeccionId FROM dbo.FormSecciones WHERE FormularioId=@id`);
+    for (const sec of secs.recordset) {
+      const prgs = await pool.request().input('sid', sql.Int, sec.SeccionId)
+        .query(`SELECT PreguntaId FROM dbo.FormPreguntas WHERE SeccionId=@sid`);
+      for (const p of prgs.recordset) {
+        await pool.request().input('pid', sql.Int, p.PreguntaId)
+          .query(`DELETE FROM dbo.FormOpciones WHERE PreguntaId=@pid`);
+      }
+      await pool.request().input('sid', sql.Int, sec.SeccionId)
+        .query(`DELETE FROM dbo.FormPreguntas WHERE SeccionId=@sid`);
+    }
+    await pool.request().input('id', sql.Int, formId)
+      .query(`DELETE FROM dbo.FormSecciones WHERE FormularioId=@id`);
+
+    // Borrar también respuestas
+    const resps = await pool.request().input('id', sql.Int, formId)
+      .query(`SELECT RespuestaId FROM dbo.FormRespuestas WHERE FormularioId=@id`);
+    for (const r of resps.recordset) {
+      await pool.request().input('rid', sql.Int, r.RespuestaId)
+        .query(`DELETE FROM dbo.FormRespuestaValores WHERE RespuestaId=@rid`);
+    }
+    await pool.request().input('id', sql.Int, formId)
+      .query(`DELETE FROM dbo.FormRespuestas WHERE FormularioId=@id`);
+    await pool.request().input('id', sql.Int, formId)
+      .query(`DELETE FROM dbo.Formularios WHERE FormularioId=@id`);
+
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/formularios/:id/respuestas — enviar respuesta (app)
+app.post('/api/formularios/:id/respuestas', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const formId = Number(req.params.id);
+    const { respuestas = [] } = req.body; // [{ preguntaId, valor }]
+    const operador = req.usuario.nombre || 'Desconocido';
+
+    const rRes = await pool.request()
+      .input('fid', sql.Int, formId)
+      .input('op', sql.NVarChar(200), operador)
+      .query(`INSERT INTO dbo.FormRespuestas(FormularioId,OperadorNombre) OUTPUT INSERTED.RespuestaId VALUES(@fid,@op)`);
+    const respuestaId = rRes.recordset[0].RespuestaId;
+
+    for (const rv of respuestas) {
+      await pool.request()
+        .input('rid', sql.Int, respuestaId)
+        .input('pid', sql.Int, Number(rv.preguntaId))
+        .input('v', sql.NVarChar(sql.MAX), rv.valor != null ? String(rv.valor) : null)
+        .query(`INSERT INTO dbo.FormRespuestaValores(RespuestaId,PreguntaId,Valor) VALUES(@rid,@pid,@v)`);
+    }
+
+    res.status(201).json({ respuestaId, ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/formularios/:id/respuestas — ver respuestas de un formulario (admin)
+app.get('/api/formularios/:id/respuestas', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    if (req.usuario.rol !== 'admin') return res.status(403).json({ error: 'Solo admin' });
+    const formId = Number(req.params.id);
+
+    const rRes = await pool.request().input('id', sql.Int, formId)
+      .query(`SELECT r.*, f.Nombre AS FormularioNombre
+              FROM dbo.FormRespuestas r
+              JOIN dbo.Formularios f ON f.FormularioId=r.FormularioId
+              WHERE r.FormularioId=@id ORDER BY r.FechaEnvio DESC`);
+
+    for (const resp of rRes.recordset) {
+      const vRes = await pool.request().input('rid', sql.Int, resp.RespuestaId)
+        .query(`SELECT rv.PreguntaId, rv.Valor, p.Texto, p.TipoRespuesta
+                FROM dbo.FormRespuestaValores rv
+                JOIN dbo.FormPreguntas p ON p.PreguntaId=rv.PreguntaId
+                WHERE rv.RespuestaId=@rid ORDER BY p.Orden`);
+      resp.valores = vRes.recordset;
+    }
+
+    res.json(rRes.recordset);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
