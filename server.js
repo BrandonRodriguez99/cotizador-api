@@ -6559,6 +6559,28 @@ app.post('/api/formularios/:id/respuestas', autenticar, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// GET /api/formularios/respuestas/todas — todas las respuestas de todos los formularios (admin)
+app.get('/api/formularios/respuestas/todas', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    if (req.usuario.rol !== 'admin') return res.status(403).json({ error: 'Solo admin' });
+    const rRes = await pool.request()
+      .query(`SELECT r.*, f.Nombre AS FormularioNombre
+              FROM dbo.FormRespuestas r
+              JOIN dbo.Formularios f ON f.FormularioId=r.FormularioId
+              ORDER BY r.FechaEnvio DESC`);
+    for (const resp of rRes.recordset) {
+      const vRes = await pool.request().input('rid', sql.Int, resp.RespuestaId)
+        .query(`SELECT rv.PreguntaId, rv.Valor, p.Texto, p.TipoRespuesta
+                FROM dbo.FormRespuestaValores rv
+                JOIN dbo.FormPreguntas p ON p.PreguntaId=rv.PreguntaId
+                WHERE rv.RespuestaId=@rid ORDER BY p.Orden`);
+      resp.valores = vRes.recordset;
+    }
+    res.json(rRes.recordset);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // GET /api/formularios/:id/respuestas — ver respuestas de un formulario (admin)
 app.get('/api/formularios/:id/respuestas', autenticar, async (req, res) => {
   try {
