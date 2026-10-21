@@ -5970,6 +5970,82 @@ app.post('/api/acceso-alumnos', autenticar, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ─── DVIR Público (sin autenticación) ────────────────────────────────────────
+app.get('/api/dvir-publico/vehiculos', async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const r = await pool.request().query(`
+      SELECT VehiculoId, Marca, Modelo, Placa, Año, Color,
+             LTRIM(RTRIM(Marca + ' ' + Modelo + ' (' + Placa + ')')) AS Nombre
+      FROM dbo.Vehiculos WHERE Activo=1 ORDER BY Marca, Modelo
+    `);
+    res.json(r.recordset);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/dvir-publico/upload', async (req, res) => {
+  try {
+    const { base64 } = req.body;
+    if (!base64) return res.status(400).json({ error: 'No se recibió imagen' });
+    const result = await cloudinary.uploader.upload(base64, {
+      folder: 'dvir',
+      resource_type: 'image',
+    });
+    res.json({ url: result.secure_url });
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'No se pudo subir la imagen' });
+  }
+});
+
+app.post('/api/dvir-publico', async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const { vehiculoId, vehiculoNombre, vin, ubicacion, matricula, odometro,
+            tipoInspeccion, estadoSeguridad, operadorNombre, fotos = [], puntos = [] } = req.body;
+    if (!vehiculoNombre || !tipoInspeccion || !estadoSeguridad)
+      return res.status(400).json({ error: 'vehiculoNombre, tipoInspeccion y estadoSeguridad son requeridos' });
+    if (!operadorNombre)
+      return res.status(400).json({ error: 'operadorNombre es requerido' });
+
+    const defectos = puntos.filter(p => p.estado === 'defecto').length;
+
+    const ins = await pool.request()
+      .input('vid',  sql.Int,          vehiculoId || null)
+      .input('vn',   sql.NVarChar(200), vehiculoNombre)
+      .input('vin',  sql.NVarChar(50),  vin || null)
+      .input('ub',   sql.NVarChar(500), ubicacion || null)
+      .input('mat',  sql.NVarChar(50),  matricula || null)
+      .input('od',   sql.Decimal(10,2), odometro || null)
+      .input('ti',   sql.NVarChar(20),  tipoInspeccion)
+      .input('es',   sql.NVarChar(20),  estadoSeguridad)
+      .input('def',  sql.Int,           defectos)
+      .input('cp',   sql.NVarChar(200), operadorNombre)
+      .query(`INSERT INTO dbo.DVIR (VehiculoId,VehiculoNombre,VIN,Ubicacion,Matricula,Odometro,TipoInspeccion,EstadoSeguridad,Defectos,CreadoPor)
+              OUTPUT INSERTED.DVIRId
+              VALUES (@vid,@vn,@vin,@ub,@mat,@od,@ti,@es,@def,@cp)`);
+    const dvirId = ins.recordset[0].DVIRId;
+
+    for (const f of fotos) {
+      await pool.request()
+        .input('did', sql.Int,           dvirId)
+        .input('ang', sql.NVarChar(50),  f.angulo)
+        .input('url', sql.NVarChar(1000),f.url)
+        .query(`INSERT INTO dbo.DVIRFoto (DVIRId,Angulo,FotoUrl) VALUES (@did,@ang,@url)`);
+    }
+    for (const p of puntos) {
+      await pool.request()
+        .input('did', sql.Int,            dvirId)
+        .input('cat', sql.NVarChar(100),  p.categoria)
+        .input('nom', sql.NVarChar(200),  p.nombre)
+        .input('est', sql.NVarChar(10),   p.estado)
+        .input('url', sql.NVarChar(1000), p.fotoUrl || null)
+        .input('com', sql.NVarChar(2000), p.comentario || null)
+        .query(`INSERT INTO dbo.DVIRPunto (DVIRId,Categoria,Nombre,Estado,FotoUrl,Comentario) VALUES (@did,@cat,@nom,@est,@url,@com)`);
+    }
+    res.json({ DVIRId: dvirId, ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ─── DVIR — Vehículos (usa catálogo existente dbo.Vehiculos) ─────────────────
 app.get('/api/dvir/vehiculos', autenticar, async (req, res) => {
   try {
