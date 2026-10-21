@@ -513,6 +513,33 @@ sql
             );
           END
 
+          IF OBJECT_ID('dbo.Semirremolques','U') IS NULL
+          BEGIN
+            CREATE TABLE dbo.Semirremolques (
+              SemirremolqueId INT IDENTITY(1,1) PRIMARY KEY,
+              Nombre          NVARCHAR(100) NOT NULL,
+              Empresa         NVARCHAR(100) NULL,
+              Marca           NVARCHAR(100) NULL,
+              Año             INT           NULL,
+              Activo          BIT           NOT NULL DEFAULT 1,
+              FechaCreacion   DATETIME2     NOT NULL DEFAULT SYSUTCDATETIME()
+            );
+
+            INSERT INTO dbo.Semirremolques (Nombre, Empresa, Marca, Año) VALUES
+              (N'DOLLY D-52', N'LARMEX', N'LOZANO', 2006),
+              (N'40118',      N'LARMEX', N'LOZANO', 2006),
+              (N'40181',      N'LARMEX', N'LOZANO', 2011),
+              (N'5302',       N'LARMEX', N'LUFKIN', 2004),
+              (N'5303',       N'LARMEX', N'LUFKIN', 2004),
+              (N'5304',       N'LARMEX', N'LUFKIN', 2004),
+              (N'5309',       N'LARMEX', N'LUFKIN', 2004),
+              (N'5370',       N'LARMEX', N'GREAT DANE', 2007),
+              (N'53128',      N'LARMEX', N'LOZANO', 2008),
+              (N'5347',       N'LARMEX', N'GREAT DANE', 2007),
+              (N'53204',      N'LARMEX', N'HYUNDAI', 2009),
+              (N'53101',      N'LARMEX', N'LOZANO', 2008);
+          END
+
           IF OBJECT_ID('dbo.Extintores','U') IS NULL
           BEGIN
             CREATE TABLE dbo.Extintores (
@@ -4288,6 +4315,46 @@ app.put('/api/seguridad/vehiculos/:id', autenticar, soloAdminOJefeSeg, async (re
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── Catálogo: Semirremolques ──────────────────────────────────────────────────
+
+app.get('/api/seguridad/semirremolques', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const r = await pool.request().query('SELECT * FROM Semirremolques WHERE Activo=1 ORDER BY Nombre');
+    res.json(r.recordset);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/seguridad/semirremolques', autenticar, soloAdminOJefeSeg, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const d = req.body;
+    const r = await pool.request()
+      .input('Nombre',  sql.NVarChar(100), d.Nombre  || '')
+      .input('Empresa', sql.NVarChar(100), d.Empresa || null)
+      .input('Marca',   sql.NVarChar(100), d.Marca   || null)
+      .input('Año',     sql.Int,           d.Año     ? Number(d.Año) : null)
+      .query('INSERT INTO Semirremolques (Nombre,Empresa,Marca,Año) VALUES (@Nombre,@Empresa,@Marca,@Año); SELECT SCOPE_IDENTITY() AS id');
+    res.json({ ok: true, id: r.recordset[0].id });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/seguridad/semirremolques/:id', autenticar, soloAdminOJefeSeg, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const d = req.body;
+    await pool.request()
+      .input('id',      sql.Int,           Number(req.params.id))
+      .input('Nombre',  sql.NVarChar(100), d.Nombre  || '')
+      .input('Empresa', sql.NVarChar(100), d.Empresa || null)
+      .input('Marca',   sql.NVarChar(100), d.Marca   || null)
+      .input('Año',     sql.Int,           d.Año     ? Number(d.Año) : null)
+      .input('Activo',  sql.Bit,           d.Activo !== false ? 1 : 0)
+      .query('UPDATE Semirremolques SET Nombre=@Nombre,Empresa=@Empresa,Marca=@Marca,Año=@Año,Activo=@Activo WHERE SemirremolqueId=@id');
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ── Catálogo: Extintores ──────────────────────────────────────────────────────
 
 app.get('/api/seguridad/extintores', autenticar, async (req, res) => {
@@ -4862,6 +4929,16 @@ app.delete('/api/seguridad/vehiculos/:id', autenticar, soloAdminOJefeSeg, async 
     await pool.request()
       .input('id', sql.Int, Number(req.params.id))
       .query('UPDATE Vehiculos SET Activo=0 WHERE VehiculoId=@id');
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/seguridad/semirremolques/:id', autenticar, soloAdminOJefeSeg, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    await pool.request()
+      .input('id', sql.Int, Number(req.params.id))
+      .query('UPDATE Semirremolques SET Activo=0 WHERE SemirremolqueId=@id');
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
