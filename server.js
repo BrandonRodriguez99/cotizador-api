@@ -960,6 +960,19 @@ sql
           IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.DVIRPunto') AND name='Resuelto')
             ALTER TABLE dbo.DVIRPunto ADD Resuelto BIT NOT NULL DEFAULT 0
         `);
+        // Columnas de semirremolque en DVIR (migración no destructiva)
+        await pool.request().query(`
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.DVIR') AND name='SemirremolqueId')
+            ALTER TABLE dbo.DVIR ADD SemirremolqueId INT NULL
+        `);
+        await pool.request().query(`
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.DVIR') AND name='SemirremolqueNombre')
+            ALTER TABLE dbo.DVIR ADD SemirremolqueNombre NVARCHAR(200) NULL
+        `);
+        await pool.request().query(`
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.DVIR') AND name='TipoDVIR')
+            ALTER TABLE dbo.DVIR ADD TipoDVIR NVARCHAR(30) NULL
+        `);
         // Permiso dvir para admin
         await pool.request().query(`
           IF NOT EXISTS (SELECT 1 FROM dbo.PermisosRol WHERE Rol='admin' AND Vista='dvir')
@@ -6060,6 +6073,14 @@ app.get('/api/dvir-publico/vehiculos', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+app.get('/api/dvir-publico/semirremolques', async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const r = await pool.request().query('SELECT SemirremolqueId, Nombre, Empresa, Marca, Año FROM Semirremolques WHERE Activo=1 ORDER BY Nombre');
+    res.json(r.recordset);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.post('/api/dvir-publico/upload', async (req, res) => {
   try {
     const { base64 } = req.body;
@@ -6078,7 +6099,8 @@ app.post('/api/dvir-publico', async (req, res) => {
   try {
     if (!ensurePool(res)) return;
     const { vehiculoId, vehiculoNombre, vin, ubicacion, matricula, odometro,
-            tipoInspeccion, estadoSeguridad, operadorNombre, fotos = [], puntos = [] } = req.body;
+            tipoInspeccion, estadoSeguridad, operadorNombre, fotos = [], puntos = [],
+            tipoDVIR, semirremolqueId, semirremolqueNombre } = req.body;
     if (!vehiculoNombre || !tipoInspeccion || !estadoSeguridad)
       return res.status(400).json({ error: 'vehiculoNombre, tipoInspeccion y estadoSeguridad son requeridos' });
     if (!operadorNombre)
@@ -6097,9 +6119,12 @@ app.post('/api/dvir-publico', async (req, res) => {
       .input('es',   sql.NVarChar(20),  estadoSeguridad)
       .input('def',  sql.Int,           defectos)
       .input('cp',   sql.NVarChar(200), operadorNombre)
-      .query(`INSERT INTO dbo.DVIR (VehiculoId,VehiculoNombre,VIN,Ubicacion,Matricula,Odometro,TipoInspeccion,EstadoSeguridad,Defectos,CreadoPor)
+      .input('td',   sql.NVarChar(30),  tipoDVIR || 'solo_vehiculo')
+      .input('sid',  sql.Int,           semirremolqueId || null)
+      .input('sn',   sql.NVarChar(200), semirremolqueNombre || null)
+      .query(`INSERT INTO dbo.DVIR (VehiculoId,VehiculoNombre,VIN,Ubicacion,Matricula,Odometro,TipoInspeccion,EstadoSeguridad,Defectos,CreadoPor,TipoDVIR,SemirremolqueId,SemirremolqueNombre)
               OUTPUT INSERTED.DVIRId
-              VALUES (@vid,@vn,@vin,@ub,@mat,@od,@ti,@es,@def,@cp)`);
+              VALUES (@vid,@vn,@vin,@ub,@mat,@od,@ti,@es,@def,@cp,@td,@sid,@sn)`);
     const dvirId = ins.recordset[0].DVIRId;
 
     for (const f of fotos) {
