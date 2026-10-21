@@ -866,7 +866,8 @@ sql
               ('encargado_vehiculos','historial'),('encargado_vehiculos','aprobaciones'),('encargado_vehiculos','asistencia'),
               ('encargado_vehiculos','vehiculos'),('encargado_vehiculos','cursos'),('encargado_vehiculos','conceptos'),
               ('encargado_vehiculos','coaches'),('encargado_vehiculos','modalidades'),('encargado_vehiculos','clientes'),
-              ('encargado_vehiculos','proveedores'),('encargado_vehiculos','unidadesNegocio'),('encargado_vehiculos','areasConsumo')
+              ('encargado_vehiculos','proveedores'),('encargado_vehiculos','unidadesNegocio'),('encargado_vehiculos','areasConsumo'),
+              ('encargado_vehiculos','dvir'),('encargado_vehiculos','diesel'),('encargado_vehiculos','formularios')
           END
         `);
         console.log('✅ Tabla PermisosRol asegurada');
@@ -876,6 +877,14 @@ sql
           IF NOT EXISTS (SELECT 1 FROM dbo.PermisosRol WHERE Rol='admin' AND Vista='formularios')
             INSERT INTO dbo.PermisosRol (Rol, Vista) VALUES ('admin','formularios')
         `);
+
+        // ── Migración: vistas dvir/diesel/formularios para encargado_vehiculos ──
+        for (const vista of ['dvir', 'diesel', 'formularios']) {
+          await pool.request().query(`
+            IF NOT EXISTS (SELECT 1 FROM dbo.PermisosRol WHERE Rol='encargado_vehiculos' AND Vista='${vista}')
+              INSERT INTO dbo.PermisosRol (Rol, Vista) VALUES ('encargado_vehiculos','${vista}')
+          `);
+        }
 
         // ── Módulo DVIR ────────────────────────────────────────────────────────
         await pool.request().query(`
