@@ -1936,7 +1936,10 @@ app.post("/api/usuarios/:id/resetear", autenticar, soloAdmin, async (req, res) =
 app.get("/api/catalogos/cursos", async (req, res) => {
   try {
     if (!pool) return res.status(500).send("No hay conexión SQL");
-    const result = await pool.request().query(`SELECT * FROM Cursos WHERE Activo = 1 ORDER BY Nombre`);
+    const todos = req.query.todos === '1';
+    const result = await pool.request().query(
+      todos ? `SELECT * FROM Cursos ORDER BY Nombre` : `SELECT * FROM Cursos WHERE Activo = 1 ORDER BY Nombre`
+    );
     res.json(result.recordset.map((r) => ({ ...r, TipoCosto: r.TipoCosto == null ? "" : r.TipoCosto })));
   } catch (err) { console.log("❌ ERROR CURSOS:", err); res.status(500).json({ error: err.message || 'Error interno del servidor' }); }
 });
