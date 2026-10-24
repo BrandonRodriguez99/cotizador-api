@@ -255,6 +255,8 @@ sql
             ALTER TABLE dbo.Cursos ADD Horas DECIMAL(10,2) NULL;
           IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Cursos') AND name='TipoCurso')
             ALTER TABLE dbo.Cursos ADD TipoCurso NVARCHAR(50) NULL;
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Cursos') AND name='Descripcion')
+            ALTER TABLE dbo.Cursos ADD Descripcion NVARCHAR(500) NULL;
 
           -- Columna Costo en Coaches
           IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Coaches') AND name='Costo')
