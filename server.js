@@ -7169,7 +7169,17 @@ app.get('/api/academia/cursos/:id/asistencias', autenticar, async (req, res) => 
       .query(`SELECT * FROM AcademiaSesiones WHERE CursoAcademiaId=@id ORDER BY NumeroSesion`);
     const rInscritos = await pool.request()
       .input('id', sql.Int, cursoId)
-      .query(`SELECT * FROM AcademiaInscripciones WHERE CursoAcademiaId=@id AND Activo=1 ORDER BY NombreCompleto`);
+      .query(`SELECT i.*,
+        ISNULL(NULLIF(i.Terminal,''), ISNULL(p.Terminal,'')) AS Terminal,
+        ISNULL(NULLIF(i.Plaza,''), ISNULL(p.Plaza,'')) AS Plaza,
+        ISNULL(NULLIF(i.Area,''), ISNULL(p.Area,'')) AS Area,
+        ISNULL(NULLIF(i.Correo,''), ISNULL(p.CorreoElectronico,'')) AS Correo,
+        ISNULL(NULLIF(i.Empresa,''), ISNULL(p.Empresa,'')) AS Empresa
+      FROM AcademiaInscripciones i
+      LEFT JOIN [biUDAT].[STG].[tPlantillaColaboradoresTrayecto] p
+        ON p.NumeroEmpleado=i.NumeroEmpleado AND p.BActivo=1
+      WHERE i.CursoAcademiaId=@id AND i.Activo=1
+      ORDER BY i.NombreCompleto`);
     const rAsist = await pool.request()
       .input('id', sql.Int, cursoId)
       .query(`SELECT a.* FROM AcademiaAsistencias a
@@ -7193,9 +7203,11 @@ app.get('/api/academia/historico', autenticar, async (req, res) => {
     const r = await pool.request().query(`
       SELECT
         i.InscripcionId, i.NumeroEmpleado, i.NombreCompleto,
-        ISNULL(i.Empresa,'') AS Empresa, ISNULL(i.Terminal,'') AS Terminal,
-        ISNULL(i.Plaza,'') AS Plaza, ISNULL(i.Area,'') AS Area,
-        ISNULL(i.Correo,'') AS Correo,
+        ISNULL(NULLIF(i.Empresa,''), ISNULL(p.Empresa,'')) AS Empresa,
+        ISNULL(NULLIF(i.Terminal,''), ISNULL(p.Terminal,'')) AS Terminal,
+        ISNULL(NULLIF(i.Plaza,''), ISNULL(p.Plaza,'')) AS Plaza,
+        ISNULL(NULLIF(i.Area,''), ISNULL(p.Area,'')) AS Area,
+        ISNULL(NULLIF(i.Correo,''), ISNULL(p.CorreoElectronico,'')) AS Correo,
         c.CursoAcademiaId, c.Nombre AS CursoNombre, ISNULL(c.Generacion,'') AS Generacion,
         ISNULL(c.Instructor,'') AS Instructor, ISNULL(c.Modalidad,'') AS Modalidad,
         c.PorcentajeMinAsistencia,
@@ -7208,6 +7220,8 @@ app.get('/api/academia/historico', autenticar, async (req, res) => {
         i.FechaInscripcion
       FROM AcademiaInscripciones i
       INNER JOIN AcademiaCursos c ON i.CursoAcademiaId=c.CursoAcademiaId
+      LEFT JOIN [biUDAT].[STG].[tPlantillaColaboradoresTrayecto] p
+        ON p.NumeroEmpleado=i.NumeroEmpleado AND p.BActivo=1
       WHERE i.Activo=1
       ORDER BY i.NombreCompleto, c.Nombre
     `);
