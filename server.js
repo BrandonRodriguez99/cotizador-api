@@ -1065,6 +1065,9 @@ sql
             )
         `);
         await pool.request().query(`
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.AcademiaCursos') AND name='Generacion')
+            ALTER TABLE dbo.AcademiaCursos ADD Generacion NVARCHAR(100) NULL;
+
           IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name='AcademiaSesiones' AND schema_id=SCHEMA_ID('dbo'))
             CREATE TABLE dbo.AcademiaSesiones (
               SesionId        INT IDENTITY(1,1) PRIMARY KEY,
@@ -6937,7 +6940,7 @@ app.get('/api/academia/cursos/:id', autenticar, async (req, res) => {
 app.post('/api/academia/cursos', autenticar, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
-    const { Nombre, Descripcion, Instructor, Modalidad, Ubicacion, Capacidad, PorcentajeMinAsistencia, sesiones } = req.body;
+    const { Nombre, Descripcion, Instructor, Modalidad, Ubicacion, Capacidad, PorcentajeMinAsistencia, Generacion, sesiones } = req.body;
     const rCurso = await pool.request()
       .input('Nombre', sql.NVarChar, Nombre)
       .input('Descripcion', sql.NVarChar, Descripcion || null)
@@ -6946,10 +6949,11 @@ app.post('/api/academia/cursos', autenticar, async (req, res) => {
       .input('Ubicacion', sql.NVarChar, Ubicacion || null)
       .input('Capacidad', sql.Int, Capacidad || 25)
       .input('PctMin', sql.Int, PorcentajeMinAsistencia || 75)
+      .input('Generacion', sql.NVarChar, Generacion || null)
       .input('CreadoPor', sql.NVarChar, req.usuario?.nombre || null)
-      .query(`INSERT INTO AcademiaCursos (Nombre, Descripcion, Instructor, Modalidad, Ubicacion, Capacidad, PorcentajeMinAsistencia, CreadoPor)
+      .query(`INSERT INTO AcademiaCursos (Nombre, Descripcion, Instructor, Modalidad, Ubicacion, Capacidad, PorcentajeMinAsistencia, Generacion, CreadoPor)
               OUTPUT INSERTED.*
-              VALUES (@Nombre, @Descripcion, @Instructor, @Modalidad, @Ubicacion, @Capacidad, @PctMin, @CreadoPor)`);
+              VALUES (@Nombre, @Descripcion, @Instructor, @Modalidad, @Ubicacion, @Capacidad, @PctMin, @Generacion, @CreadoPor)`);
     const curso = rCurso.recordset[0];
     if (Array.isArray(sesiones) && sesiones.length > 0) {
       for (let i = 0; i < sesiones.length; i++) {
@@ -6972,7 +6976,7 @@ app.post('/api/academia/cursos', autenticar, async (req, res) => {
 app.put('/api/academia/cursos/:id', autenticar, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
-    const { Nombre, Descripcion, Instructor, Modalidad, Ubicacion, Capacidad, Estado, PorcentajeMinAsistencia } = req.body;
+    const { Nombre, Descripcion, Instructor, Modalidad, Ubicacion, Capacidad, Estado, PorcentajeMinAsistencia, Generacion } = req.body;
     await pool.request()
       .input('id', sql.Int, req.params.id)
       .input('Nombre', sql.NVarChar, Nombre)
@@ -6983,9 +6987,10 @@ app.put('/api/academia/cursos/:id', autenticar, async (req, res) => {
       .input('Capacidad', sql.Int, Capacidad || 25)
       .input('Estado', sql.NVarChar, Estado || 'Activo')
       .input('PctMin', sql.Int, PorcentajeMinAsistencia || 75)
+      .input('Generacion', sql.NVarChar, Generacion || null)
       .query(`UPDATE AcademiaCursos SET Nombre=@Nombre, Descripcion=@Descripcion, Instructor=@Instructor,
               Modalidad=@Modalidad, Ubicacion=@Ubicacion, Capacidad=@Capacidad, Estado=@Estado,
-              PorcentajeMinAsistencia=@PctMin
+              PorcentajeMinAsistencia=@PctMin, Generacion=@Generacion
               WHERE CursoAcademiaId=@id`);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
