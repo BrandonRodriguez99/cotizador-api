@@ -2201,8 +2201,8 @@ app.get("/api/catalogos/participantes", async (req, res) => {
           )) AS NombreCompleto,
           ISNULL(Empresa,'') AS Empresa,
           ISNULL(UnidadNegocio,'') AS UnidadNegocio,
-          ISNULL(UnidadNegocio,'') AS Terminal,
-          ISNULL(Correo,'') AS Correo
+          ISNULL(Terminal,'') AS Terminal,
+          ISNULL(CorreoElectronico,'') AS Correo
         FROM [biUDAT].[STG].[tPlantillaColaboradoresTrayecto]
         WHERE BActivo = 1
           AND (
@@ -7122,7 +7122,7 @@ app.post('/api/academia/inscripciones', autenticar, async (req, res) => {
         .input('Nombre', sql.NVarChar, p.NombreCompleto)
         .input('Empresa', sql.NVarChar, p.Empresa || null)
         .input('Correo', sql.NVarChar, p.Correo || null)
-        .input('Terminal', sql.NVarChar, p.Terminal || p.UnidadNegocio || null)
+        .input('Terminal', sql.NVarChar, p.Terminal || null)
         .input('InscritoPor', sql.NVarChar, req.usuario?.nombre || null)
         .query(`INSERT INTO AcademiaInscripciones (CursoAcademiaId, NumeroEmpleado, NombreCompleto, Empresa, Correo, Terminal, InscritoPor)
                 OUTPUT INSERTED.*
