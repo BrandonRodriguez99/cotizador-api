@@ -7108,10 +7108,73 @@ app.get('/api/academia/cursos/:id/inscritos', autenticar, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.post('/api/academia/inscripciones', autenticar, async (req, res) => {
+app.post('/api/academia/inscripciones/verificar', autenticar, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
     const { CursoAcademiaId, participantes } = req.body;
+    if (!Array.isArray(participantes) || participantes.length === 0) {
+      return res.status(400).json({ error: 'Se requiere al menos un participante' });
+    }
+    const rCurso = await pool.request()
+      .input('id', sql.Int, CursoAcademiaId)
+      .query(`SELECT NombreCurso FROM AcademiaCursos WHERE CursoAcademiaId=@id`);
+    if (!rCurso.recordset[0]) return res.status(404).json({ error: 'Curso no encontrado' });
+    const nombreCurso = rCurso.recordset[0].NombreCurso;
+
+    const bloqueados = [];
+    const advertencias = [];
+    const nuevos = [];
+
+    for (const p of participantes) {
+      const rPrev = await pool.request()
+        .input('NumEmp', sql.NVarChar, p.NumeroEmpleado)
+        .input('NombreCurso', sql.NVarChar, nombreCurso)
+        .input('CursoActual', sql.Int, CursoAcademiaId)
+        .query(`
+          SELECT i.InscripcionId, i.CursoAcademiaId, i.FechaInscripcion, i.Activo,
+            c.NombreCurso, c.Generacion,
+            (SELECT COUNT(*) FROM AcademiaSesiones s WHERE s.CursoAcademiaId=c.CursoAcademiaId) AS TotalSesiones,
+            (SELECT COUNT(*) FROM AcademiaAsistencias a
+              INNER JOIN AcademiaSesiones s ON a.SesionId=s.SesionId
+              WHERE s.CursoAcademiaId=c.CursoAcademiaId AND a.InscripcionId=i.InscripcionId) AS SesionesAsistidas
+          FROM AcademiaInscripciones i
+          INNER JOIN AcademiaCursos c ON c.CursoAcademiaId=i.CursoAcademiaId
+          WHERE i.NumeroEmpleado=@NumEmp AND c.NombreCurso=@NombreCurso AND i.CursoAcademiaId<>@CursoActual
+          ORDER BY i.FechaInscripcion DESC
+        `);
+
+      const prevInscripciones = rPrev.recordset;
+      const completado = prevInscripciones.find(r => r.TotalSesiones > 0 && r.SesionesAsistidas >= r.TotalSesiones);
+      if (completado) {
+        bloqueados.push({
+          ...p,
+          razon: `Completó "${nombreCurso}" en generación "${completado.Generacion || '-'}" (${completado.SesionesAsistidas}/${completado.TotalSesiones} sesiones)`,
+          inscripcionPrevia: completado
+        });
+      } else {
+        const activa = prevInscripciones.find(r => r.Activo === true || r.Activo === 1);
+        if (activa) {
+          const fecha = activa.FechaInscripcion ? new Date(activa.FechaInscripcion).toLocaleDateString('es-MX') : 'fecha desconocida';
+          advertencias.push({
+            ...p,
+            razon: `Inscrito previamente en generación "${activa.Generacion || '-'}" el ${fecha} con ${activa.SesionesAsistidas}/${activa.TotalSesiones} asistencias`,
+            inscripcionPreviaId: activa.InscripcionId,
+            cursoAnteriorId: activa.CursoAcademiaId
+          });
+        } else {
+          nuevos.push(p);
+        }
+      }
+    }
+
+    res.json({ bloqueados, advertencias, nuevos });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/academia/inscripciones', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const { CursoAcademiaId, participantes, confirmarReinscripcion, inscripcionesPrevias } = req.body;
     if (!Array.isArray(participantes) || participantes.length === 0) {
       return res.status(400).json({ error: 'Se requiere al menos un participante' });
     }
@@ -7124,6 +7187,15 @@ app.post('/api/academia/inscripciones', autenticar, async (req, res) => {
     if (participantes.length > disponibles) {
       return res.status(400).json({ error: `Solo hay ${disponibles} lugar(es) disponible(s)` });
     }
+
+    if (confirmarReinscripcion && Array.isArray(inscripcionesPrevias)) {
+      for (const prevId of inscripcionesPrevias) {
+        await pool.request()
+          .input('prevId', sql.Int, prevId)
+          .query(`UPDATE AcademiaInscripciones SET Activo=0 WHERE InscripcionId=@prevId`);
+      }
+    }
+
     const inscritos = [];
     for (const p of participantes) {
       const existe = await pool.request()
