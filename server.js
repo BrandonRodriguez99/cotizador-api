@@ -1097,6 +1097,10 @@ sql
         await pool.request().query(`
           IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.AcademiaInscripciones') AND name='Terminal')
             ALTER TABLE dbo.AcademiaInscripciones ADD Terminal NVARCHAR(200) NULL;
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.AcademiaInscripciones') AND name='Plaza')
+            ALTER TABLE dbo.AcademiaInscripciones ADD Plaza NVARCHAR(200) NULL;
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.AcademiaInscripciones') AND name='Area')
+            ALTER TABLE dbo.AcademiaInscripciones ADD Area NVARCHAR(200) NULL;
         `);
         await pool.request().query(`
           IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name='AcademiaAsistencias' AND schema_id=SCHEMA_ID('dbo'))
@@ -2202,7 +2206,9 @@ app.get("/api/catalogos/participantes", async (req, res) => {
           ISNULL(Empresa,'') AS Empresa,
           ISNULL(UnidadNegocio,'') AS UnidadNegocio,
           ISNULL(Terminal,'') AS Terminal,
-          ISNULL(CorreoElectronico,'') AS Correo
+          ISNULL(CorreoElectronico,'') AS Correo,
+          ISNULL(Plaza,'') AS Plaza,
+          ISNULL(Area,'') AS Area
         FROM [biUDAT].[STG].[tPlantillaColaboradoresTrayecto]
         WHERE BActivo = 1
           AND (
@@ -7123,10 +7129,12 @@ app.post('/api/academia/inscripciones', autenticar, async (req, res) => {
         .input('Empresa', sql.NVarChar, p.Empresa || null)
         .input('Correo', sql.NVarChar, p.Correo || null)
         .input('Terminal', sql.NVarChar, p.Terminal || null)
+        .input('Plaza', sql.NVarChar, p.Plaza || null)
+        .input('Area', sql.NVarChar, p.Area || null)
         .input('InscritoPor', sql.NVarChar, req.usuario?.nombre || null)
-        .query(`INSERT INTO AcademiaInscripciones (CursoAcademiaId, NumeroEmpleado, NombreCompleto, Empresa, Correo, Terminal, InscritoPor)
+        .query(`INSERT INTO AcademiaInscripciones (CursoAcademiaId, NumeroEmpleado, NombreCompleto, Empresa, Correo, Terminal, Plaza, Area, InscritoPor)
                 OUTPUT INSERTED.*
-                VALUES (@CursoId, @NumEmp, @Nombre, @Empresa, @Correo, @Terminal, @InscritoPor)`);
+                VALUES (@CursoId, @NumEmp, @Nombre, @Empresa, @Correo, @Terminal, @Plaza, @Area, @InscritoPor)`);
       inscritos.push(r.recordset[0]);
     }
     res.json({ inscritos: inscritos.length });
