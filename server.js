@@ -1240,6 +1240,78 @@ async function sendMail(to, subject, html) {
   }
 }
 
+function generarICS(sesiones, cursoNombre, instructor, ubicacion) {
+  const lines = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//UDAT//Academia//ES',
+    'METHOD:REQUEST',
+    'CALSCALE:GREGORIAN',
+  ];
+  for (const s of sesiones) {
+    const fecha = s.Fecha ? s.Fecha.toISOString ? s.Fecha.toISOString().slice(0,10) : String(s.Fecha).slice(0,10) : '';
+    if (!fecha) continue;
+    const ymd = fecha.replace(/-/g, '');
+    const hi = (s.HoraInicio || '09:00').replace(':', '');
+    const hf = (s.HoraFin || '10:00').replace(':', '');
+    const dtStart = `${ymd}T${hi.padEnd(4,'0')}00`;
+    const dtEnd = `${ymd}T${hf.padEnd(4,'0')}00`;
+    const uid = `academia-s${s.SesionId}@udat.com.mx`;
+    lines.push(
+      'BEGIN:VEVENT',
+      `UID:${uid}`,
+      `DTSTART;TZID=America/Mexico_City:${dtStart}`,
+      `DTEND;TZID=America/Mexico_City:${dtEnd}`,
+      `SUMMARY:${cursoNombre} — Sesión ${s.NumeroSesion}`,
+      `DESCRIPTION:Instructor: ${instructor || 'Por definir'}\\nSesión ${s.NumeroSesion} de ${sesiones.length}`,
+      `LOCATION:${(s.Ubicacion || ubicacion || '').replace(/,/g, '\\,')}`,
+      'STATUS:CONFIRMED',
+      `ORGANIZER;CN=Sistema UDAT:mailto:${GMAIL_USER}`,
+      'END:VEVENT'
+    );
+  }
+  lines.push('END:VCALENDAR');
+  return lines.join('\r\n');
+}
+
+async function enviarInvitacionCurso(correo, cursoNombre, generacion, sesiones, instructor, ubicacion) {
+  if (!correo || !GMAIL_USER || !GMAIL_APP_PASS) return;
+  try {
+    const icsContent = generarICS(sesiones, cursoNombre, instructor, ubicacion);
+    const titulo = generacion ? `${cursoNombre} — ${generacion}` : cursoNombre;
+    const sesionesHtml = sesiones.map(s => {
+      const fecha = s.Fecha ? (s.Fecha.toISOString ? s.Fecha.toISOString().slice(0,10) : String(s.Fecha).slice(0,10)) : '';
+      return `<li>Sesión ${s.NumeroSesion}: <strong>${fecha}</strong> ${s.HoraInicio || ''} - ${s.HoraFin || ''}</li>`;
+    }).join('');
+    await mailTransporter.sendMail({
+      from: `"Academia UDAT" <${GMAIL_USER}>`,
+      to: correo,
+      subject: `Inscripción al curso: ${titulo}`,
+      html: `
+        <div style="font-family:Arial,sans-serif;max-width:600px">
+          <h2 style="color:#1e3a5f">Has sido inscrito al curso</h2>
+          <h3 style="margin:4px 0">${titulo}</h3>
+          <p><strong>Instructor:</strong> ${instructor || 'Por definir'}</p>
+          <p><strong>Ubicación:</strong> ${ubicacion || 'Por definir'}</p>
+          <p><strong>Sesiones programadas:</strong></p>
+          <ul>${sesionesHtml || '<li>Sin sesiones programadas aún</li>'}</ul>
+          <p style="color:#6b7280;font-size:13px">Las sesiones se han agregado a tu calendario automáticamente. Si no las ves, abre el archivo adjunto .ics.</p>
+          <hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0">
+          <p style="font-size:11px;color:#9ca3af">Este correo fue enviado desde el Sistema UDAT — Academia</p>
+        </div>
+      `,
+      icalEvent: {
+        filename: 'invitacion.ics',
+        method: 'REQUEST',
+        content: icsContent
+      }
+    });
+    console.log(`✅ Invitación calendario enviada a: ${correo} — ${cursoNombre}`);
+  } catch (e) {
+    console.log(`⚠️ Error enviando invitación calendario a ${correo}:`, e.message);
+  }
+}
+
 async function getEmailsDeRol(rol) {
   if (!pool) return [];
   try {
@@ -7218,6 +7290,25 @@ app.post('/api/academia/inscripciones', autenticar, async (req, res) => {
                 VALUES (@CursoId, @NumEmp, @Nombre, @Empresa, @Correo, @Terminal, @Plaza, @Area, @InscritoPor)`);
       inscritos.push(r.recordset[0]);
     }
+
+    if (inscritos.length > 0) {
+      const rCursoInfo = await pool.request()
+        .input('cid', sql.Int, CursoAcademiaId)
+        .query(`SELECT Nombre, Generacion, Instructor, Ubicacion FROM AcademiaCursos WHERE CursoAcademiaId=@cid`);
+      const ci = rCursoInfo.recordset[0];
+      const rSes = await pool.request()
+        .input('cid', sql.Int, CursoAcademiaId)
+        .query(`SELECT * FROM AcademiaSesiones WHERE CursoAcademiaId=@cid ORDER BY NumeroSesion`);
+      if (ci && rSes.recordset.length > 0) {
+        for (const p of participantes) {
+          const correo = p.Correo || null;
+          if (correo) {
+            enviarInvitacionCurso(correo, ci.Nombre, ci.Generacion, rSes.recordset, ci.Instructor, ci.Ubicacion);
+          }
+        }
+      }
+    }
+
     res.json({ inscritos: inscritos.length });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
