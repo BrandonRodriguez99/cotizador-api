@@ -7117,9 +7117,9 @@ app.post('/api/academia/inscripciones/verificar', autenticar, async (req, res) =
     }
     const rCurso = await pool.request()
       .input('id', sql.Int, CursoAcademiaId)
-      .query(`SELECT NombreCurso FROM AcademiaCursos WHERE CursoAcademiaId=@id`);
+      .query(`SELECT Nombre FROM AcademiaCursos WHERE CursoAcademiaId=@id`);
     if (!rCurso.recordset[0]) return res.status(404).json({ error: 'Curso no encontrado' });
-    const nombreCurso = rCurso.recordset[0].NombreCurso;
+    const nombreCurso = rCurso.recordset[0].Nombre;
 
     const bloqueados = [];
     const advertencias = [];
@@ -7132,14 +7132,14 @@ app.post('/api/academia/inscripciones/verificar', autenticar, async (req, res) =
         .input('CursoActual', sql.Int, CursoAcademiaId)
         .query(`
           SELECT i.InscripcionId, i.CursoAcademiaId, i.FechaInscripcion, i.Activo,
-            c.NombreCurso, c.Generacion,
+            c.Nombre, c.Generacion,
             (SELECT COUNT(*) FROM AcademiaSesiones s WHERE s.CursoAcademiaId=c.CursoAcademiaId) AS TotalSesiones,
             (SELECT COUNT(*) FROM AcademiaAsistencias a
               INNER JOIN AcademiaSesiones s ON a.SesionId=s.SesionId
               WHERE s.CursoAcademiaId=c.CursoAcademiaId AND a.InscripcionId=i.InscripcionId) AS SesionesAsistidas
           FROM AcademiaInscripciones i
           INNER JOIN AcademiaCursos c ON c.CursoAcademiaId=i.CursoAcademiaId
-          WHERE i.NumeroEmpleado=@NumEmp AND c.NombreCurso=@NombreCurso AND i.CursoAcademiaId<>@CursoActual
+          WHERE i.NumeroEmpleado=@NumEmp AND c.Nombre=@NombreCurso AND i.CursoAcademiaId<>@CursoActual
           ORDER BY i.FechaInscripcion DESC
         `);
 
