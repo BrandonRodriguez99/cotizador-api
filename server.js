@@ -1103,6 +1103,15 @@ sql
             ALTER TABLE dbo.AcademiaInscripciones ADD Area NVARCHAR(200) NULL;
         `);
         await pool.request().query(`
+          ;WITH dupes AS (
+            SELECT InscripcionId,
+              ROW_NUMBER() OVER (PARTITION BY CursoAcademiaId, NumeroEmpleado ORDER BY InscripcionId) AS rn
+            FROM AcademiaInscripciones WHERE Activo=1
+          )
+          UPDATE AcademiaInscripciones SET Activo=0
+          WHERE InscripcionId IN (SELECT InscripcionId FROM dupes WHERE rn > 1);
+        `);
+        await pool.request().query(`
           IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name='AcademiaAsistencias' AND schema_id=SCHEMA_ID('dbo'))
             CREATE TABLE dbo.AcademiaAsistencias (
               AsistenciaId    INT IDENTITY(1,1) PRIMARY KEY,
@@ -7175,6 +7184,34 @@ app.get('/api/academia/cursos/:id/asistencias', autenticar, async (req, res) => 
       asistencias: rAsist.recordset,
       porcentajeMin: rCurso.recordset[0]?.PorcentajeMinAsistencia || 75,
     });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/academia/historico', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const r = await pool.request().query(`
+      SELECT
+        i.InscripcionId, i.NumeroEmpleado, i.NombreCompleto,
+        ISNULL(i.Empresa,'') AS Empresa, ISNULL(i.Terminal,'') AS Terminal,
+        ISNULL(i.Plaza,'') AS Plaza, ISNULL(i.Area,'') AS Area,
+        ISNULL(i.Correo,'') AS Correo,
+        c.CursoAcademiaId, c.Nombre AS CursoNombre, ISNULL(c.Generacion,'') AS Generacion,
+        ISNULL(c.Instructor,'') AS Instructor, ISNULL(c.Modalidad,'') AS Modalidad,
+        c.PorcentajeMinAsistencia,
+        (SELECT COUNT(*) FROM AcademiaSesiones s WHERE s.CursoAcademiaId=c.CursoAcademiaId) AS TotalSesiones,
+        (SELECT COUNT(*) FROM AcademiaAsistencias a
+         INNER JOIN AcademiaSesiones s ON a.SesionId=s.SesionId
+         WHERE a.InscripcionId=i.InscripcionId AND s.CursoAcademiaId=c.CursoAcademiaId) AS SesionesAsistidas,
+        (SELECT MIN(Fecha) FROM AcademiaSesiones s WHERE s.CursoAcademiaId=c.CursoAcademiaId) AS FechaInicio,
+        (SELECT MAX(Fecha) FROM AcademiaSesiones s WHERE s.CursoAcademiaId=c.CursoAcademiaId) AS FechaFin,
+        i.FechaInscripcion
+      FROM AcademiaInscripciones i
+      INNER JOIN AcademiaCursos c ON i.CursoAcademiaId=c.CursoAcademiaId
+      WHERE i.Activo=1
+      ORDER BY i.NombreCompleto, c.Nombre
+    `);
+    res.json(r.recordset);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
