@@ -2007,7 +2007,10 @@ app.delete("/api/catalogos/clientes/:id", async (req, res) => {
 
 app.get("/api/catalogos/coaches", async (req, res) => {
   try {
-    const result = await pool.request().query(`SELECT CoachId, Nombre, Costo FROM Coaches WHERE Activo = 1 ORDER BY Nombre`);
+    const todos = req.query.todos === '1';
+    const result = await pool.request().query(
+      todos ? `SELECT * FROM Coaches ORDER BY Nombre` : `SELECT * FROM Coaches WHERE Activo = 1 ORDER BY Nombre`
+    );
     res.json(result.recordset);
   } catch (err) { console.log("❌ ERROR COACHES:", err); res.status(500).json({ error: err.message || 'Error interno del servidor' }); }
 });
