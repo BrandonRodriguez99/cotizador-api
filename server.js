@@ -1121,10 +1121,27 @@ sql
               MetodoRegistro  NVARCHAR(30) DEFAULT 'QR'
             )
         `);
-        await pool.request().query(`
-          IF NOT EXISTS (SELECT 1 FROM dbo.PermisosRol WHERE Rol='admin' AND Vista='academia')
-            INSERT INTO dbo.PermisosRol (Rol, Vista) VALUES ('admin','academia')
-        `);
+        // Vistas Academia para admin
+        for (const vista of ['academiaCursos','academiaInscripciones','academiaAsistencias','academiaQR','academiaHistorico']) {
+          await pool.request().query(`
+            IF NOT EXISTS (SELECT 1 FROM dbo.PermisosRol WHERE Rol='admin' AND Vista='${vista}')
+              INSERT INTO dbo.PermisosRol (Rol, Vista) VALUES ('admin','${vista}')
+          `);
+        }
+        // Vistas Academia para rol academia (acceso completo)
+        for (const vista of ['academiaCursos','academiaInscripciones','academiaAsistencias','academiaQR','academiaHistorico']) {
+          await pool.request().query(`
+            IF NOT EXISTS (SELECT 1 FROM dbo.PermisosRol WHERE Rol='academia' AND Vista='${vista}')
+              INSERT INTO dbo.PermisosRol (Rol, Vista) VALUES ('academia','${vista}')
+          `);
+        }
+        // Vistas Academia para rol capacitacion (sin Cursos ni QR)
+        for (const vista of ['academiaInscripciones','academiaAsistencias','academiaHistorico']) {
+          await pool.request().query(`
+            IF NOT EXISTS (SELECT 1 FROM dbo.PermisosRol WHERE Rol='capacitacion' AND Vista='${vista}')
+              INSERT INTO dbo.PermisosRol (Rol, Vista) VALUES ('capacitacion','${vista}')
+          `);
+        }
         console.log('✅ Tablas Academia aseguradas');
 
         // ── Formularios ──────────────────────────────────────────────────────────
