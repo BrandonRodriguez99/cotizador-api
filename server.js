@@ -7404,6 +7404,28 @@ app.get('/api/academia/historico', autenticar, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+app.get('/api/academia/calendario', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const r = await pool.request().query(`
+      SELECT
+        s.SesionId, s.CursoAcademiaId, s.NumeroSesion,
+        CONVERT(VARCHAR(10), s.Fecha, 23) AS Fecha,
+        s.HoraInicio, s.HoraFin,
+        ISNULL(s.Ubicacion, c.Ubicacion) AS Ubicacion,
+        c.Nombre, ISNULL(c.Generacion,'') AS Generacion,
+        ISNULL(c.Instructor,'') AS Instructor,
+        c.Estado, ISNULL(c.Modalidad,'') AS Modalidad, c.Capacidad,
+        (SELECT COUNT(*) FROM AcademiaInscripciones i
+         WHERE i.CursoAcademiaId = c.CursoAcademiaId AND i.Activo = 1) AS Inscritos
+      FROM AcademiaSesiones s
+      JOIN AcademiaCursos c ON c.CursoAcademiaId = s.CursoAcademiaId
+      ORDER BY s.Fecha, s.HoraInicio
+    `);
+    res.json(r.recordset);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.post('/api/academia/asistencia-qr', async (req, res) => {
   try {
     if (!pool) return res.status(500).json({ error: 'No hay conexión SQL' });
