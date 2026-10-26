@@ -6710,6 +6710,58 @@ app.get('/api/formularios/activos', autenticar, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// GET /api/formularios/publico/lista — formularios activos (sin autenticación)
+app.get('/api/formularios/publico/lista', async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const r = await pool.request()
+      .query(`SELECT FormularioId, Nombre, Descripcion FROM dbo.Formularios WHERE Activo=1 ORDER BY Nombre`);
+    res.json(r.recordset.map(f => ({ ...f, Slug: String(f.FormularioId) })));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/formularios/publico/:id — obtener formulario activo (sin autenticación)
+app.get('/api/formularios/publico/:id', async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const formId = Number(req.params.id);
+    if (isNaN(formId)) return res.status(400).json({ error: 'ID inválido' });
+    const form = await cargarFormularioCompleto(formId);
+    if (!form || !form.Activo) return res.status(404).json({ error: 'Formulario no encontrado o inactivo' });
+    res.json(form);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/formularios/publico/:id/responder — enviar respuesta (sin autenticación)
+app.post('/api/formularios/publico/:id/responder', async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const formId = Number(req.params.id);
+    if (isNaN(formId)) return res.status(400).json({ error: 'ID inválido' });
+    const { nombreUsuario = 'Anónimo', valores = [] } = req.body;
+
+    const chk = await pool.request().input('id', sql.Int, formId)
+      .query(`SELECT FormularioId FROM dbo.Formularios WHERE FormularioId=@id AND Activo=1`);
+    if (!chk.recordset.length) return res.status(404).json({ error: 'Formulario no encontrado o inactivo' });
+
+    const rRes = await pool.request()
+      .input('fid', sql.Int, formId)
+      .input('op', sql.NVarChar(200), nombreUsuario)
+      .query(`INSERT INTO dbo.FormRespuestas(FormularioId,OperadorNombre) OUTPUT INSERTED.RespuestaId VALUES(@fid,@op)`);
+    const respuestaId = rRes.recordset[0].RespuestaId;
+
+    for (const rv of valores) {
+      await pool.request()
+        .input('rid', sql.Int, respuestaId)
+        .input('pid', sql.Int, Number(rv.preguntaId))
+        .input('v', sql.NVarChar(sql.MAX), rv.valor != null ? String(rv.valor) : null)
+        .query(`INSERT INTO dbo.FormRespuestaValores(RespuestaId,PreguntaId,Valor) VALUES(@rid,@pid,@v)`);
+    }
+
+    res.status(201).json({ ok: true, respuestaId });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // GET /api/formularios/:id — detalle completo
 app.get('/api/formularios/:id', autenticar, async (req, res) => {
   try {
