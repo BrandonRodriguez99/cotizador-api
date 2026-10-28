@@ -1139,6 +1139,26 @@ sql
           IF NOT EXISTS (SELECT 1 FROM dbo.PermisosRol WHERE Rol='capacitacion' AND Vista='academia')
             INSERT INTO dbo.PermisosRol (Rol, Vista) VALUES ('capacitacion','academia')
         `);
+        // Solicitudes de nuevos cursos al catálogo
+        await pool.request().query(`
+          IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name='SolicitudesCatalogoCursos' AND schema_id=SCHEMA_ID('dbo'))
+            CREATE TABLE dbo.SolicitudesCatalogoCursos (
+              SolicitudId           INT IDENTITY(1,1) PRIMARY KEY,
+              Nombre                NVARCHAR(300) NOT NULL,
+              Descripcion           NVARCHAR(500) NULL,
+              TipoCurso             NVARCHAR(50)  NULL,
+              Horas                 DECIMAL(10,2) NULL,
+              Costo                 DECIMAL(18,2) NULL,
+              DuracionDefaultDias   INT           NULL,
+              Justificacion         NVARCHAR(1000) NULL,
+              Estado                NVARCHAR(30)  NOT NULL DEFAULT 'Pendiente',
+              SolicitadoPor         NVARCHAR(200) NULL,
+              FechaSolicitud        DATETIME      DEFAULT GETDATE(),
+              ResueltoPor           NVARCHAR(200) NULL,
+              FechaResolucion       DATETIME      NULL,
+              Comentario            NVARCHAR(500) NULL
+            )
+        `);
         console.log('✅ Tablas Academia aseguradas');
 
         // ── Formularios ──────────────────────────────────────────────────────────
@@ -7554,6 +7574,90 @@ app.get('/api/academia/historico', autenticar, async (req, res) => {
       ORDER BY i.NombreCompleto, c.Nombre
     `);
     res.json(r.recordset);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── SOLICITUDES CATÁLOGO CURSOS ─────────────────────────────────────────────
+app.get('/api/academia/solicitudes-catalogo', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const esAprobador = ['admin', 'academia'].includes(req.usuario?.rol);
+    let r;
+    if (esAprobador) {
+      r = await pool.request().query(`SELECT * FROM SolicitudesCatalogoCursos ORDER BY FechaSolicitud DESC`);
+    } else {
+      r = await pool.request()
+        .input('quien', sql.NVarChar, req.usuario?.nombre || '')
+        .query(`SELECT * FROM SolicitudesCatalogoCursos WHERE SolicitadoPor=@quien ORDER BY FechaSolicitud DESC`);
+    }
+    res.json(r.recordset);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/academia/solicitudes-catalogo', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const { Nombre, Descripcion, TipoCurso, Horas, Costo, DuracionDefaultDias, Justificacion } = req.body;
+    if (!Nombre?.trim()) return res.status(400).json({ error: 'Nombre requerido' });
+    const r = await pool.request()
+      .input('Nombre',              sql.NVarChar(300),  Nombre)
+      .input('Descripcion',         sql.NVarChar(500),  Descripcion || null)
+      .input('TipoCurso',           sql.NVarChar(50),   TipoCurso || null)
+      .input('Horas',               sql.Decimal(10,2),  Horas != null ? Number(Horas) : null)
+      .input('Costo',               sql.Decimal(18,2),  Costo != null ? Number(Costo) : null)
+      .input('DuracionDefaultDias', sql.Int,            DuracionDefaultDias != null ? Number(DuracionDefaultDias) : null)
+      .input('Justificacion',       sql.NVarChar(1000), Justificacion || null)
+      .input('SolicitadoPor',       sql.NVarChar(200),  req.usuario?.nombre || null)
+      .query(`INSERT INTO SolicitudesCatalogoCursos
+        (Nombre,Descripcion,TipoCurso,Horas,Costo,DuracionDefaultDias,Justificacion,SolicitadoPor)
+        OUTPUT INSERTED.*
+        VALUES (@Nombre,@Descripcion,@TipoCurso,@Horas,@Costo,@DuracionDefaultDias,@Justificacion,@SolicitadoPor)`);
+    res.json(r.recordset[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/api/academia/solicitudes-catalogo/:id/aprobar', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    if (!['admin', 'academia'].includes(req.usuario?.rol)) return res.status(403).json({ error: 'Sin permiso' });
+    const id = Number(req.params.id);
+    const rSol = await pool.request().input('id', sql.Int, id)
+      .query(`SELECT * FROM SolicitudesCatalogoCursos WHERE SolicitudId=@id`);
+    const s = rSol.recordset[0];
+    if (!s) return res.status(404).json({ error: 'Solicitud no encontrada' });
+    if (s.Estado !== 'Pendiente') return res.status(400).json({ error: 'La solicitud ya fue resuelta' });
+    // Insertar en catálogo de cursos
+    await pool.request()
+      .input('Nombre',            sql.NVarChar, s.Nombre)
+      .input('Descripcion',       sql.NVarChar, s.Descripcion || null)
+      .input('TipoCurso',         sql.NVarChar, s.TipoCurso || null)
+      .input('Horas',             sql.Decimal(10,2), s.Horas || null)
+      .input('Costo',             sql.Decimal(18,2), s.Costo || null)
+      .input('DuracionDefaultDias', sql.Int,    s.DuracionDefaultDias || null)
+      .query(`INSERT INTO dbo.Cursos (Nombre,Descripcion,TipoCurso,Horas,Costo,DuracionDefaultDias,Activo)
+              VALUES (@Nombre,@Descripcion,@TipoCurso,@Horas,@Costo,@DuracionDefaultDias,1)`);
+    // Marcar solicitud como aprobada
+    await pool.request()
+      .input('id',         sql.Int,        id)
+      .input('quien',      sql.NVarChar,   req.usuario?.nombre || null)
+      .input('comentario', sql.NVarChar,   req.body?.Comentario || null)
+      .query(`UPDATE SolicitudesCatalogoCursos SET Estado='Aprobado',ResueltoPor=@quien,FechaResolucion=GETDATE(),Comentario=@comentario WHERE SolicitudId=@id`);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/api/academia/solicitudes-catalogo/:id/rechazar', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    if (!['admin', 'academia'].includes(req.usuario?.rol)) return res.status(403).json({ error: 'Sin permiso' });
+    const id = Number(req.params.id);
+    const { Comentario } = req.body;
+    await pool.request()
+      .input('id',         sql.Int,      id)
+      .input('quien',      sql.NVarChar, req.usuario?.nombre || null)
+      .input('comentario', sql.NVarChar, Comentario || null)
+      .query(`UPDATE SolicitudesCatalogoCursos SET Estado='Rechazado',ResueltoPor=@quien,FechaResolucion=GETDATE(),Comentario=@comentario WHERE SolicitudId=@id`);
+    res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
