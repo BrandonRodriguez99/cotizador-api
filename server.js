@@ -1068,6 +1068,9 @@ sql
           IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.AcademiaCursos') AND name='Generacion')
             ALTER TABLE dbo.AcademiaCursos ADD Generacion NVARCHAR(100) NULL;
 
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.AcademiaCursos') AND name='HorasPorSesion')
+            ALTER TABLE dbo.AcademiaCursos ADD HorasPorSesion DECIMAL(5,1) NULL;
+
           IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name='AcademiaSesiones' AND schema_id=SCHEMA_ID('dbo'))
             CREATE TABLE dbo.AcademiaSesiones (
               SesionId        INT IDENTITY(1,1) PRIMARY KEY,
@@ -7117,7 +7120,7 @@ app.get('/api/academia/cursos/:id', autenticar, async (req, res) => {
 app.post('/api/academia/cursos', autenticar, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
-    const { Nombre, Descripcion, Instructor, Modalidad, Ubicacion, Capacidad, PorcentajeMinAsistencia, Generacion, sesiones } = req.body;
+    const { Nombre, Descripcion, Instructor, Modalidad, Ubicacion, Capacidad, PorcentajeMinAsistencia, Generacion, HorasPorSesion, sesiones } = req.body;
     const rCurso = await pool.request()
       .input('Nombre', sql.NVarChar, Nombre)
       .input('Descripcion', sql.NVarChar, Descripcion || null)
@@ -7127,10 +7130,11 @@ app.post('/api/academia/cursos', autenticar, async (req, res) => {
       .input('Capacidad', sql.Int, Capacidad || 25)
       .input('PctMin', sql.Int, PorcentajeMinAsistencia || 75)
       .input('Generacion', sql.NVarChar, Generacion || null)
+      .input('HorasPorSesion', sql.Decimal(5,1), HorasPorSesion != null ? Number(HorasPorSesion) : null)
       .input('CreadoPor', sql.NVarChar, req.usuario?.nombre || null)
-      .query(`INSERT INTO AcademiaCursos (Nombre, Descripcion, Instructor, Modalidad, Ubicacion, Capacidad, PorcentajeMinAsistencia, Generacion, CreadoPor)
+      .query(`INSERT INTO AcademiaCursos (Nombre, Descripcion, Instructor, Modalidad, Ubicacion, Capacidad, PorcentajeMinAsistencia, Generacion, HorasPorSesion, CreadoPor)
               OUTPUT INSERTED.*
-              VALUES (@Nombre, @Descripcion, @Instructor, @Modalidad, @Ubicacion, @Capacidad, @PctMin, @Generacion, @CreadoPor)`);
+              VALUES (@Nombre, @Descripcion, @Instructor, @Modalidad, @Ubicacion, @Capacidad, @PctMin, @Generacion, @HorasPorSesion, @CreadoPor)`);
     const curso = rCurso.recordset[0];
     if (Array.isArray(sesiones) && sesiones.length > 0) {
       for (let i = 0; i < sesiones.length; i++) {
@@ -7153,7 +7157,7 @@ app.post('/api/academia/cursos', autenticar, async (req, res) => {
 app.put('/api/academia/cursos/:id', autenticar, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
-    const { Nombre, Descripcion, Instructor, Modalidad, Ubicacion, Capacidad, Estado, PorcentajeMinAsistencia, Generacion } = req.body;
+    const { Nombre, Descripcion, Instructor, Modalidad, Ubicacion, Capacidad, Estado, PorcentajeMinAsistencia, Generacion, HorasPorSesion } = req.body;
     await pool.request()
       .input('id', sql.Int, req.params.id)
       .input('Nombre', sql.NVarChar, Nombre)
@@ -7165,9 +7169,10 @@ app.put('/api/academia/cursos/:id', autenticar, async (req, res) => {
       .input('Estado', sql.NVarChar, Estado || 'Activo')
       .input('PctMin', sql.Int, PorcentajeMinAsistencia || 75)
       .input('Generacion', sql.NVarChar, Generacion || null)
+      .input('HorasPorSesion', sql.Decimal(5,1), HorasPorSesion != null ? Number(HorasPorSesion) : null)
       .query(`UPDATE AcademiaCursos SET Nombre=@Nombre, Descripcion=@Descripcion, Instructor=@Instructor,
               Modalidad=@Modalidad, Ubicacion=@Ubicacion, Capacidad=@Capacidad, Estado=@Estado,
-              PorcentajeMinAsistencia=@PctMin, Generacion=@Generacion
+              PorcentajeMinAsistencia=@PctMin, Generacion=@Generacion, HorasPorSesion=@HorasPorSesion
               WHERE CursoAcademiaId=@id`);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -7536,18 +7541,8 @@ app.get('/api/academia/historico', autenticar, async (req, res) => {
         (SELECT COUNT(*) FROM AcademiaAsistencias a
          INNER JOIN AcademiaSesiones s ON a.SesionId=s.SesionId
          WHERE a.InscripcionId=i.InscripcionId AND s.CursoAcademiaId=c.CursoAcademiaId) AS SesionesAsistidas,
-        (SELECT ISNULL(SUM(
-          CASE WHEN s.HoraInicio IS NOT NULL AND s.HoraFin IS NOT NULL
-               THEN DATEDIFF(MINUTE, CAST(s.HoraInicio AS TIME), CAST(s.HoraFin AS TIME))
-               ELSE 0 END), 0)
-         FROM AcademiaSesiones s WHERE s.CursoAcademiaId=c.CursoAcademiaId) AS MinutosTotales,
-        (SELECT ISNULL(SUM(
-          CASE WHEN s.HoraInicio IS NOT NULL AND s.HoraFin IS NOT NULL
-               THEN DATEDIFF(MINUTE, CAST(s.HoraInicio AS TIME), CAST(s.HoraFin AS TIME))
-               ELSE 0 END), 0)
-         FROM AcademiaAsistencias a
-         INNER JOIN AcademiaSesiones s ON a.SesionId=s.SesionId
-         WHERE a.InscripcionId=i.InscripcionId AND s.CursoAcademiaId=c.CursoAcademiaId) AS MinutosAsistidos,
+        ISNULL(c.HorasPorSesion, 0) * 60 * (SELECT COUNT(*) FROM AcademiaSesiones s WHERE s.CursoAcademiaId=c.CursoAcademiaId) AS MinutosTotales,
+        ISNULL(c.HorasPorSesion, 0) * 60 * (SELECT COUNT(*) FROM AcademiaAsistencias a INNER JOIN AcademiaSesiones s ON a.SesionId=s.SesionId WHERE a.InscripcionId=i.InscripcionId AND s.CursoAcademiaId=c.CursoAcademiaId) AS MinutosAsistidos,
         (SELECT MIN(Fecha) FROM AcademiaSesiones s WHERE s.CursoAcademiaId=c.CursoAcademiaId) AS FechaInicio,
         (SELECT MAX(Fecha) FROM AcademiaSesiones s WHERE s.CursoAcademiaId=c.CursoAcademiaId) AS FechaFin,
         i.FechaInscripcion
