@@ -1752,11 +1752,13 @@ const generateOrderFolio = (id) => {
 // ─── Middleware JWT ───────────────────────────────────────────────────────────
 function autenticar(req, res, next) {
   const auth = req.headers.authorization;
-  if (!auth || !auth.startsWith("Bearer ")) {
+  const tokenParam = req.query.token;
+  const rawToken = auth?.startsWith('Bearer ') ? auth.slice(7) : tokenParam;
+  if (!rawToken) {
     return res.status(401).json({ error: "No autorizado" });
   }
   try {
-    req.usuario = jwt.verify(auth.slice(7), JWT_SECRET);
+    req.usuario = jwt.verify(rawToken, JWT_SECRET);
     next();
   } catch {
     return res.status(401).json({ error: "Token inválido o expirado" });
@@ -7240,6 +7242,83 @@ app.get('/api/academia/cursos/:id/inscritos', autenticar, async (req, res) => {
         ORDER BY i.NombreCompleto
       `);
     res.json(r.recordset);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /api/academia/cursos/:id/evento.ics — descarga .ics con sesiones y participantes
+app.get('/api/academia/cursos/:id/evento.ics', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const cursoId = Number(req.params.id);
+
+    const cRes = await pool.request().input('id', sql.Int, cursoId)
+      .query(`SELECT * FROM dbo.AcademiaCursos WHERE CursoAcademiaId=@id`);
+    const curso = cRes.recordset[0];
+    if (!curso) return res.status(404).json({ error: 'Curso no encontrado' });
+
+    const sRes = await pool.request().input('id', sql.Int, cursoId)
+      .query(`SELECT * FROM dbo.AcademiaSesiones WHERE CursoAcademiaId=@id ORDER BY Fecha, HoraInicio`);
+    const sesiones = sRes.recordset;
+
+    const iRes = await pool.request().input('id', sql.Int, cursoId)
+      .query(`SELECT NombreCompleto, Correo FROM dbo.AcademiaInscripciones WHERE CursoAcademiaId=@id AND Activo=1`);
+    const inscritos = iRes.recordset;
+
+    const nombre = [curso.Nombre, curso.Generacion].filter(Boolean).join(' — ');
+    const fmtYMD = d => d ? new Date(d).toISOString().slice(0,10).replace(/-/g,'') : '';
+    const fmtHM  = h => h ? String(h).replace(':','').padEnd(4,'0') + '00' : '090000';
+
+    const attendees = inscritos
+      .filter(i => i.Correo)
+      .map(i => `ATTENDEE;CN="${(i.NombreCompleto||i.Correo).replace(/"/g,'')}";RSVP=TRUE:mailto:${i.Correo}`);
+
+    const lines = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'PRODID:-//UDAT//Academia//ES',
+      'METHOD:REQUEST',
+      'CALSCALE:GREGORIAN',
+    ];
+
+    if (sesiones.length > 0) {
+      for (const s of sesiones) {
+        const ymd = fmtYMD(s.Fecha);
+        lines.push(
+          'BEGIN:VEVENT',
+          `UID:academia-s${s.SesionId}@udat.com.mx`,
+          `DTSTART;TZID=America/Mexico_City:${ymd}T${fmtHM(s.HoraInicio)}`,
+          `DTEND;TZID=America/Mexico_City:${ymd}T${fmtHM(s.HoraFin)}`,
+          `SUMMARY:${nombre} — Sesión ${s.NumeroSesion}`,
+          `DESCRIPTION:Instructor: ${curso.Instructor||'Por definir'}\\nModalidad: ${curso.Modalidad||'—'}\\nParticipantes: ${inscritos.length}/${curso.Capacidad}`,
+          `LOCATION:${(s.Ubicacion||curso.Ubicacion||'').replace(/,/g,'\\,')}`,
+          ...attendees,
+          'STATUS:CONFIRMED',
+          'END:VEVENT',
+        );
+      }
+    } else {
+      const fi = fmtYMD(curso.FechaInicio) || '20260101';
+      const ff = fmtYMD(curso.FechaFin || curso.FechaInicio) || fi;
+      lines.push(
+        'BEGIN:VEVENT',
+        `UID:academia-c${cursoId}@udat.com.mx`,
+        `DTSTART;VALUE=DATE:${fi}`,
+        `DTEND;VALUE=DATE:${ff}`,
+        `SUMMARY:${nombre}`,
+        `DESCRIPTION:Instructor: ${curso.Instructor||'Por definir'}\\nModalidad: ${curso.Modalidad||'—'}\\nParticipantes: ${inscritos.length}/${curso.Capacidad}`,
+        `LOCATION:${(curso.Ubicacion||'').replace(/,/g,'\\,')}`,
+        ...attendees,
+        'STATUS:CONFIRMED',
+        'END:VEVENT',
+      );
+    }
+
+    lines.push('END:VCALENDAR');
+    const ics = lines.join('\r\n');
+    const filename = nombre.replace(/[/\\?%*:|"<>]/g,'-') + '.ics';
+    res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(ics);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
