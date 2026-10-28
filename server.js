@@ -7243,6 +7243,79 @@ app.get('/api/academia/cursos/:id/inscritos', autenticar, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// POST /api/academia/cursos/:id/convocar — envía invitación de calendario a todos los inscritos activos
+app.post('/api/academia/cursos/:id/convocar', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const cursoId = Number(req.params.id);
+
+    // Obtener datos del curso
+    const cRes = await pool.request().input('id', sql.Int, cursoId)
+      .query(`SELECT * FROM dbo.AcademiaCursos WHERE CursoAcademiaId=@id`);
+    if (!cRes.recordset.length) return res.status(404).json({ error: 'Curso no encontrado' });
+    const curso = cRes.recordset[0];
+
+    // Obtener sesiones del curso
+    const sRes = await pool.request().input('id', sql.Int, cursoId)
+      .query(`SELECT * FROM dbo.AcademiaSesiones WHERE CursoAcademiaId=@id ORDER BY Fecha, HoraInicio`);
+    const sesiones = sRes.recordset;
+
+    // Obtener inscritos activos con correo
+    const iRes = await pool.request().input('id', sql.Int, cursoId)
+      .query(`SELECT NombreCompleto, Correo FROM dbo.AcademiaInscripciones WHERE CursoAcademiaId=@id AND Activo=1 AND Correo IS NOT NULL AND Correo != ''`);
+    const conCorreo = iRes.recordset;
+
+    if (!GMAIL_USER || !GMAIL_APP_PASS) {
+      return res.status(503).json({ error: 'Servidor de correo no configurado' });
+    }
+    if (conCorreo.length === 0) {
+      return res.status(400).json({ error: 'Ningún participante activo tiene correo registrado' });
+    }
+
+    const cursoNombre = curso.Generacion ? `${curso.Nombre} — ${curso.Generacion}` : curso.Nombre;
+    const icsContent = generarICS(sesiones, curso.Nombre, curso.Instructor, curso.Ubicacion);
+
+    const sesionesHtml = sesiones.map(s => {
+      const fecha = s.Fecha ? (s.Fecha.toISOString ? s.Fecha.toISOString().slice(0,10) : String(s.Fecha).slice(0,10)) : '';
+      return `<li>Sesión ${s.NumeroSesion}: <strong>${fecha}</strong> ${s.HoraInicio || ''} - ${s.HoraFin || ''}</li>`;
+    }).join('');
+
+    let enviados = 0;
+    const errores = [];
+    for (const p of conCorreo) {
+      try {
+        await mailTransporter.sendMail({
+          from: `"Academia UDAT" <${GMAIL_USER}>`,
+          to: p.Correo,
+          subject: `Convocatoria: ${cursoNombre}`,
+          html: `
+            <div style="font-family:Arial,sans-serif;max-width:600px">
+              <h2 style="color:#1e3a5f">Convocatoria al curso</h2>
+              <h3 style="margin:4px 0">${cursoNombre}</h3>
+              <p>Estimado/a <strong>${p.NombreCompleto}</strong>,</p>
+              <p>Queda convocado/a a participar en el curso indicado arriba.</p>
+              <p><strong>Instructor:</strong> ${curso.Instructor || 'Por definir'}</p>
+              <p><strong>Ubicación:</strong> ${curso.Ubicacion || 'Por definir'}</p>
+              <p><strong>Modalidad:</strong> ${curso.Modalidad || '—'}</p>
+              <p><strong>Sesiones programadas:</strong></p>
+              <ul>${sesionesHtml || '<li>Sin sesiones programadas aún</li>'}</ul>
+              <p style="color:#6b7280;font-size:13px">Abre el archivo adjunto .ics para agregar el curso a tu calendario.</p>
+              <p>Favor de confirmar tu asistencia.</p>
+              <hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0">
+              <p style="font-size:11px;color:#9ca3af">Este correo fue enviado desde el Sistema UDAT — Academia</p>
+            </div>
+          `,
+          icalEvent: { filename: 'convocatoria.ics', method: 'REQUEST', content: icsContent },
+        });
+        enviados++;
+      } catch (e) {
+        errores.push(p.Correo);
+      }
+    }
+    res.json({ ok: true, enviados, sinEnviar: errores, totalConCorreo: conCorreo.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.post('/api/academia/inscripciones/verificar', autenticar, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
