@@ -4924,6 +4924,27 @@ app.post('/api/seguridad/visitas', autenticar, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+app.put('/api/seguridad/visitas/:id', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const id = Number(req.params.id);
+    const { NombreVisitante, Empresa, Documento, AQuienVisita, Motivo, TipoVisita } = req.body;
+    await pool.request()
+      .input('id',              sql.Int,            id)
+      .input('NombreVisitante', sql.NVarChar(300),  NombreVisitante || null)
+      .input('Empresa',         sql.NVarChar(200),  Empresa         || null)
+      .input('Documento',       sql.NVarChar(100),  Documento       || null)
+      .input('AQuienVisita',    sql.NVarChar(200),  AQuienVisita    || null)
+      .input('Motivo',          sql.NVarChar(500),  Motivo          || null)
+      .input('TipoVisita',      sql.NVarChar(50),   TipoVisita      || 'general')
+      .query(`UPDATE dbo.VisitasSeguridad SET
+        NombreVisitante=@NombreVisitante, Empresa=@Empresa, Documento=@Documento,
+        AQuienVisita=@AQuienVisita, Motivo=@Motivo, TipoVisita=@TipoVisita
+        WHERE ${visitasPK}=@id`);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.put('/api/seguridad/visitas/:id/salida', autenticar, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
