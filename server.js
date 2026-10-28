@@ -7536,6 +7536,18 @@ app.get('/api/academia/historico', autenticar, async (req, res) => {
         (SELECT COUNT(*) FROM AcademiaAsistencias a
          INNER JOIN AcademiaSesiones s ON a.SesionId=s.SesionId
          WHERE a.InscripcionId=i.InscripcionId AND s.CursoAcademiaId=c.CursoAcademiaId) AS SesionesAsistidas,
+        (SELECT ISNULL(SUM(
+          CASE WHEN s.HoraInicio IS NOT NULL AND s.HoraFin IS NOT NULL
+               THEN DATEDIFF(MINUTE, CAST(s.HoraInicio AS TIME), CAST(s.HoraFin AS TIME))
+               ELSE 0 END), 0)
+         FROM AcademiaSesiones s WHERE s.CursoAcademiaId=c.CursoAcademiaId) AS MinutosTotales,
+        (SELECT ISNULL(SUM(
+          CASE WHEN s.HoraInicio IS NOT NULL AND s.HoraFin IS NOT NULL
+               THEN DATEDIFF(MINUTE, CAST(s.HoraInicio AS TIME), CAST(s.HoraFin AS TIME))
+               ELSE 0 END), 0)
+         FROM AcademiaAsistencias a
+         INNER JOIN AcademiaSesiones s ON a.SesionId=s.SesionId
+         WHERE a.InscripcionId=i.InscripcionId AND s.CursoAcademiaId=c.CursoAcademiaId) AS MinutosAsistidos,
         (SELECT MIN(Fecha) FROM AcademiaSesiones s WHERE s.CursoAcademiaId=c.CursoAcademiaId) AS FechaInicio,
         (SELECT MAX(Fecha) FROM AcademiaSesiones s WHERE s.CursoAcademiaId=c.CursoAcademiaId) AS FechaFin,
         i.FechaInscripcion
