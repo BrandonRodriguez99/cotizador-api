@@ -1138,6 +1138,10 @@ sql
               MetodoRegistro  NVARCHAR(30) DEFAULT 'QR'
             )
         `);
+        await pool.request().query(`
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.AcademiaAsistencias') AND name='Firma')
+            ALTER TABLE dbo.AcademiaAsistencias ADD Firma NVARCHAR(200) NULL
+        `);
         // Vista academia para admin
         await pool.request().query(`
           IF NOT EXISTS (SELECT 1 FROM dbo.PermisosRol WHERE Rol='admin' AND Vista='academia')
@@ -7760,7 +7764,7 @@ app.get('/api/academia/calendario', autenticar, async (req, res) => {
 app.post('/api/academia/asistencia-qr', async (req, res) => {
   try {
     if (!pool) return res.status(500).json({ error: 'No hay conexión SQL' });
-    const { sesionId, numeroEmpleado } = req.body;
+    const { sesionId, numeroEmpleado, firma } = req.body;
     if (!sesionId || !numeroEmpleado) return res.status(400).json({ error: 'Faltan datos' });
     const rSesion = await pool.request()
       .input('sid', sql.Int, sesionId)
@@ -7790,7 +7794,8 @@ app.post('/api/academia/asistencia-qr', async (req, res) => {
     await pool.request()
       .input('sid', sql.Int, sesionId)
       .input('iid', sql.Int, inscripcion.InscripcionId)
-      .query(`INSERT INTO AcademiaAsistencias (SesionId, InscripcionId) VALUES (@sid, @iid)`);
+      .input('firma', sql.NVarChar, firma || null)
+      .query(`INSERT INTO AcademiaAsistencias (SesionId, InscripcionId, Firma) VALUES (@sid, @iid, @firma)`);
     res.json({ ok: true, mensaje: 'Asistencia registrada correctamente', participante: inscripcion.NombreCompleto, curso: sesion.CursoNombre });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
