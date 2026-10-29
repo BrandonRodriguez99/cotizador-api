@@ -7659,8 +7659,13 @@ app.get('/api/academia/ubits', autenticar, async (req, res) => {
       `),
       pool.request().query(`
         SELECT NumeroEmpleado, Empresa, Terminal
-        FROM [biUDAT].[STG].[tPlantillaColaboradoresTrayecto]
-        WHERE BActivo=1 AND TipoColaboradorId = 309
+        FROM (
+          SELECT NumeroEmpleado, Empresa, Terminal,
+            ROW_NUMBER() OVER (PARTITION BY NumeroEmpleado ORDER BY FechaCarga DESC) AS rn
+          FROM [biUDAT].[STG].[tPlantillaColaboradoresTrayecto]
+          WHERE BActivo=1
+        ) t
+        WHERE rn = 1
       `),
     ]);
     const colabMap = {};
