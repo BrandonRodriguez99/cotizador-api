@@ -7593,12 +7593,11 @@ app.get('/api/academia/historico', autenticar, async (req, res) => {
         ISNULL(c.HorasPorSesion, 0) * 60 * (SELECT COUNT(*) FROM AcademiaAsistencias a INNER JOIN AcademiaSesiones s ON a.SesionId=s.SesionId WHERE a.InscripcionId=i.InscripcionId AND s.CursoAcademiaId=c.CursoAcademiaId) AS MinutosAsistidos,
         (SELECT MIN(Fecha) FROM AcademiaSesiones s WHERE s.CursoAcademiaId=c.CursoAcademiaId) AS FechaInicio,
         (SELECT MAX(Fecha) FROM AcademiaSesiones s WHERE s.CursoAcademiaId=c.CursoAcademiaId) AS FechaFin,
-        i.FechaInscripcion
+        i.FechaInscripcion, i.Activo AS InscripcionActiva
       FROM AcademiaInscripciones i
       INNER JOIN AcademiaCursos c ON i.CursoAcademiaId=c.CursoAcademiaId
       LEFT JOIN [biUDAT].[STG].[tPlantillaColaboradoresTrayecto] p
         ON p.NumeroEmpleado=i.NumeroEmpleado AND p.BActivo=1
-      WHERE i.Activo=1
       ORDER BY i.NombreCompleto, c.Nombre
     `);
     res.json(r.recordset);
