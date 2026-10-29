@@ -7588,6 +7588,7 @@ app.get('/api/academia/historico', autenticar, async (req, res) => {
         ISNULL(NULLIF(i.Correo,''), ISNULL(p.CorreoElectronico,'')) AS Correo,
         c.CursoAcademiaId, c.Nombre AS CursoNombre, ISNULL(c.Generacion,'') AS Generacion,
         ISNULL(c.Instructor,'') AS Instructor, ISNULL(c.Modalidad,'') AS Modalidad,
+        ISNULL(c.TipoCurso,'') AS TipoCurso,
         c.PorcentajeMinAsistencia,
         (SELECT COUNT(*) FROM AcademiaSesiones s WHERE s.CursoAcademiaId=c.CursoAcademiaId) AS TotalSesiones,
         (SELECT COUNT(*) FROM AcademiaAsistencias a
