@@ -1082,6 +1082,9 @@ sql
           IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.AcademiaCursos') AND name='HorasPorSesion')
             ALTER TABLE dbo.AcademiaCursos ADD HorasPorSesion DECIMAL(5,1) NULL;
 
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.AcademiaCursos') AND name='Habilitado')
+            ALTER TABLE dbo.AcademiaCursos ADD Habilitado BIT NOT NULL DEFAULT 1;
+
           IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name='AcademiaSesiones' AND schema_id=SCHEMA_ID('dbo'))
             CREATE TABLE dbo.AcademiaSesiones (
               SesionId        INT IDENTITY(1,1) PRIMARY KEY,
@@ -7188,7 +7191,7 @@ app.post('/api/academia/cursos', autenticar, async (req, res) => {
 app.put('/api/academia/cursos/:id', autenticar, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
-    const { Nombre, Descripcion, Instructor, Modalidad, Ubicacion, Capacidad, Estado, PorcentajeMinAsistencia, Generacion, HorasPorSesion } = req.body;
+    const { Nombre, Descripcion, Instructor, Modalidad, Ubicacion, Capacidad, Estado, PorcentajeMinAsistencia, Generacion, HorasPorSesion, Habilitado } = req.body;
     await pool.request()
       .input('id', sql.Int, req.params.id)
       .input('Nombre', sql.NVarChar, Nombre)
@@ -7201,10 +7204,24 @@ app.put('/api/academia/cursos/:id', autenticar, async (req, res) => {
       .input('PctMin', sql.Int, PorcentajeMinAsistencia || 75)
       .input('Generacion', sql.NVarChar, Generacion || null)
       .input('HorasPorSesion', sql.Decimal(5,1), HorasPorSesion != null ? Number(HorasPorSesion) : null)
+      .input('Habilitado', sql.Bit, Habilitado != null ? (Habilitado ? 1 : 0) : 1)
       .query(`UPDATE AcademiaCursos SET Nombre=@Nombre, Descripcion=@Descripcion, Instructor=@Instructor,
               Modalidad=@Modalidad, Ubicacion=@Ubicacion, Capacidad=@Capacidad, Estado=@Estado,
-              PorcentajeMinAsistencia=@PctMin, Generacion=@Generacion, HorasPorSesion=@HorasPorSesion
+              PorcentajeMinAsistencia=@PctMin, Generacion=@Generacion, HorasPorSesion=@HorasPorSesion,
+              Habilitado=@Habilitado
               WHERE CursoAcademiaId=@id`);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/api/academia/cursos/:id/habilitado', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const { Habilitado } = req.body;
+    await pool.request()
+      .input('id', sql.Int, req.params.id)
+      .input('Habilitado', sql.Bit, Habilitado ? 1 : 0)
+      .query(`UPDATE AcademiaCursos SET Habilitado=@Habilitado WHERE CursoAcademiaId=@id`);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
