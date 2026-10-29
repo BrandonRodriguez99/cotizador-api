@@ -1085,6 +1085,9 @@ sql
           IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.AcademiaCursos') AND name='Habilitado')
             ALTER TABLE dbo.AcademiaCursos ADD Habilitado BIT NOT NULL DEFAULT 1;
 
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.AcademiaCursos') AND name='TipoCurso')
+            ALTER TABLE dbo.AcademiaCursos ADD TipoCurso NVARCHAR(50) NULL;
+
           IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name='AcademiaSesiones' AND schema_id=SCHEMA_ID('dbo'))
             CREATE TABLE dbo.AcademiaSesiones (
               SesionId        INT IDENTITY(1,1) PRIMARY KEY,
@@ -7158,7 +7161,7 @@ app.get('/api/academia/cursos/:id', autenticar, async (req, res) => {
 app.post('/api/academia/cursos', autenticar, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
-    const { Nombre, Descripcion, Instructor, Modalidad, Ubicacion, Capacidad, PorcentajeMinAsistencia, Generacion, HorasPorSesion, sesiones } = req.body;
+    const { Nombre, Descripcion, Instructor, Modalidad, Ubicacion, Capacidad, PorcentajeMinAsistencia, Generacion, HorasPorSesion, TipoCurso, sesiones } = req.body;
     const rCurso = await pool.request()
       .input('Nombre', sql.NVarChar, Nombre)
       .input('Descripcion', sql.NVarChar, Descripcion || null)
@@ -7169,10 +7172,11 @@ app.post('/api/academia/cursos', autenticar, async (req, res) => {
       .input('PctMin', sql.Int, PorcentajeMinAsistencia || 75)
       .input('Generacion', sql.NVarChar, Generacion || null)
       .input('HorasPorSesion', sql.Decimal(5,1), HorasPorSesion != null ? Number(HorasPorSesion) : null)
+      .input('TipoCurso', sql.NVarChar, TipoCurso || null)
       .input('CreadoPor', sql.NVarChar, req.usuario?.nombre || null)
-      .query(`INSERT INTO AcademiaCursos (Nombre, Descripcion, Instructor, Modalidad, Ubicacion, Capacidad, PorcentajeMinAsistencia, Generacion, HorasPorSesion, CreadoPor)
+      .query(`INSERT INTO AcademiaCursos (Nombre, Descripcion, Instructor, Modalidad, Ubicacion, Capacidad, PorcentajeMinAsistencia, Generacion, HorasPorSesion, TipoCurso, CreadoPor)
               OUTPUT INSERTED.*
-              VALUES (@Nombre, @Descripcion, @Instructor, @Modalidad, @Ubicacion, @Capacidad, @PctMin, @Generacion, @HorasPorSesion, @CreadoPor)`);
+              VALUES (@Nombre, @Descripcion, @Instructor, @Modalidad, @Ubicacion, @Capacidad, @PctMin, @Generacion, @HorasPorSesion, @TipoCurso, @CreadoPor)`);
     const curso = rCurso.recordset[0];
     if (Array.isArray(sesiones) && sesiones.length > 0) {
       for (let i = 0; i < sesiones.length; i++) {
@@ -7195,7 +7199,7 @@ app.post('/api/academia/cursos', autenticar, async (req, res) => {
 app.put('/api/academia/cursos/:id', autenticar, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
-    const { Nombre, Descripcion, Instructor, Modalidad, Ubicacion, Capacidad, Estado, PorcentajeMinAsistencia, Generacion, HorasPorSesion, Habilitado } = req.body;
+    const { Nombre, Descripcion, Instructor, Modalidad, Ubicacion, Capacidad, Estado, PorcentajeMinAsistencia, Generacion, HorasPorSesion, TipoCurso, Habilitado } = req.body;
     await pool.request()
       .input('id', sql.Int, req.params.id)
       .input('Nombre', sql.NVarChar, Nombre)
@@ -7208,11 +7212,12 @@ app.put('/api/academia/cursos/:id', autenticar, async (req, res) => {
       .input('PctMin', sql.Int, PorcentajeMinAsistencia || 75)
       .input('Generacion', sql.NVarChar, Generacion || null)
       .input('HorasPorSesion', sql.Decimal(5,1), HorasPorSesion != null ? Number(HorasPorSesion) : null)
+      .input('TipoCurso', sql.NVarChar, TipoCurso || null)
       .input('Habilitado', sql.Bit, Habilitado != null ? (Habilitado ? 1 : 0) : 1)
       .query(`UPDATE AcademiaCursos SET Nombre=@Nombre, Descripcion=@Descripcion, Instructor=@Instructor,
               Modalidad=@Modalidad, Ubicacion=@Ubicacion, Capacidad=@Capacidad, Estado=@Estado,
               PorcentajeMinAsistencia=@PctMin, Generacion=@Generacion, HorasPorSesion=@HorasPorSesion,
-              Habilitado=@Habilitado
+              TipoCurso=@TipoCurso, Habilitado=@Habilitado
               WHERE CursoAcademiaId=@id`);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
