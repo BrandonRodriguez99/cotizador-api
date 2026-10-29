@@ -7607,8 +7607,8 @@ app.get('/api/academia/historico', autenticar, async (req, res) => {
 // ─── UBITS ───────────────────────────────────────────────────────────────────
 app.get('/api/academia/ubits', autenticar, async (req, res) => {
   try {
-    if (!ensurePool(res)) return;
-    const r = await pool.request().query(`
+    if (!poolUDAT) return res.status(503).json({ error: 'Conexión a UDAT no disponible' });
+    const r = await poolUDAT.request().query(`
       SELECT
         [Columna B]                  AS NumeroEmpleado,
         [Nombre]                     AS Nombre,
@@ -7630,7 +7630,7 @@ app.get('/api/academia/ubits', autenticar, async (req, res) => {
         [Nota examen final]          AS NotaExamen,
         [Satisfacción del contenido] AS Satisfaccion,
         [Asignado]                   AS Asignado
-      FROM [UDAT].[bi].[UbitsProgreso2026]
+      FROM [bi].[UbitsProgreso2026]
       ORDER BY [Nombre], [Apellido], [Nombre plan], [Nombre contenido]
     `);
     res.json(r.recordset);
