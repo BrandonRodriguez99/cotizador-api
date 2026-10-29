@@ -2112,6 +2112,13 @@ app.put("/api/catalogos/cursos/:id", async (req, res) => {
     if (!ensurePool(res)) return;
     const result = await updateCatalogItem("Cursos", "CursoId", req.params.id, req.body);
     if (result.recordset[0].affected === 0) return res.status(404).send("Curso no encontrado");
+    // Sincronizar TipoCurso en AcademiaCursos si cambió
+    if (req.body.TipoCurso !== undefined && req.body.Nombre) {
+      await pool.request()
+        .input('tipo', sql.NVarChar, req.body.TipoCurso || null)
+        .input('nombre', sql.NVarChar, req.body.Nombre)
+        .query(`UPDATE dbo.AcademiaCursos SET TipoCurso=@tipo WHERE Nombre=@nombre`);
+    }
     res.sendStatus(204);
   } catch (err) { console.log("❌ ERROR ACTUALIZAR CURSO:", err); res.status(500).json({ error: err.message || 'Error interno del servidor' }); }
 });
