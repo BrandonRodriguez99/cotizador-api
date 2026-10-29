@@ -7421,7 +7421,7 @@ app.post('/api/academia/inscripciones/verificar', autenticar, async (req, res) =
               WHERE s.CursoAcademiaId=c.CursoAcademiaId AND a.InscripcionId=i.InscripcionId) AS SesionesAsistidas
           FROM AcademiaInscripciones i
           INNER JOIN AcademiaCursos c ON c.CursoAcademiaId=i.CursoAcademiaId
-          WHERE i.NumeroEmpleado=@NumEmp AND c.Nombre=@NombreCurso AND i.CursoAcademiaId<>@CursoActual
+          WHERE i.NumeroEmpleado=@NumEmp AND c.Nombre=@NombreCurso AND i.CursoAcademiaId<>@CursoActual AND i.Activo=1
           ORDER BY i.FechaInscripcion DESC
         `);
 
