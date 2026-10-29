@@ -1088,6 +1088,12 @@ sql
           IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.AcademiaCursos') AND name='TipoCurso')
             ALTER TABLE dbo.AcademiaCursos ADD TipoCurso NVARCHAR(50) NULL;
 
+          -- Backfill TipoCurso desde el catálogo Cursos donde coincidan por nombre
+          UPDATE ac SET ac.TipoCurso = c.TipoCurso
+          FROM dbo.AcademiaCursos ac
+          INNER JOIN dbo.Cursos c ON c.Nombre = ac.Nombre
+          WHERE ac.TipoCurso IS NULL AND c.TipoCurso IS NOT NULL AND c.TipoCurso <> '';
+
           IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name='AcademiaSesiones' AND schema_id=SCHEMA_ID('dbo'))
             CREATE TABLE dbo.AcademiaSesiones (
               SesionId        INT IDENTITY(1,1) PRIMARY KEY,
