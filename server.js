@@ -7608,32 +7608,46 @@ app.get('/api/academia/historico', autenticar, async (req, res) => {
 app.get('/api/academia/ubits', autenticar, async (req, res) => {
   try {
     if (!poolUDAT) return res.status(503).json({ error: 'Conexión a UDAT no disponible' });
-    const r = await poolUDAT.request().query(`
-      SELECT
-        [Columna B]                  AS NumeroEmpleado,
-        [Nombre]                     AS Nombre,
-        [Apellido]                   AS Apellido,
-        [Correo]                     AS Correo,
-        [Cargo]                      AS Cargo,
-        [Área corporativa]           AS Area,
-        [Supervisor]                 AS Supervisor,
-        [Nombre plan]                AS NombrePlan,
-        [Nombre contenido]           AS NombreContenido,
-        [Formato de contenido]       AS FormatoContenido,
-        [EstadoAprendizaje]          AS EstadoAprendizaje,
-        [Fecha de inicio]            AS FechaInicio,
-        [Fecha de finalización]      AS FechaFin,
-        [Fecha de asignación]        AS FechaAsignacion,
-        [Horas estudiadas]           AS HorasEstudiadas,
-        [% avance contenido]         AS PctAvance,
-        [Intentos]                   AS Intentos,
-        [Nota examen final]          AS NotaExamen,
-        [Satisfacción del contenido] AS Satisfaccion,
-        [Asignado]                   AS Asignado
-      FROM [bi].[UbitsProgreso2026]
-      ORDER BY [Nombre], [Apellido], [Nombre plan], [Nombre contenido]
-    `);
-    res.json(r.recordset);
+    const [rUbits, rColabs] = await Promise.all([
+      poolUDAT.request().query(`
+        SELECT
+          [Columna B]                  AS NumeroEmpleado,
+          [Nombre]                     AS Nombre,
+          [Apellido]                   AS Apellido,
+          [Correo]                     AS Correo,
+          [Cargo]                      AS Cargo,
+          [Área corporativa]           AS Area,
+          [Supervisor]                 AS Supervisor,
+          [Nombre plan]                AS NombrePlan,
+          [Nombre contenido]           AS NombreContenido,
+          [Formato de contenido]       AS FormatoContenido,
+          [EstadoAprendizaje]          AS EstadoAprendizaje,
+          [Fecha de inicio]            AS FechaInicio,
+          [Fecha de finalización]      AS FechaFin,
+          [Fecha de asignación]        AS FechaAsignacion,
+          [Horas estudiadas]           AS HorasEstudiadas,
+          [% avance contenido]         AS PctAvance,
+          [Intentos]                   AS Intentos,
+          [Nota examen final]          AS NotaExamen,
+          [Satisfacción del contenido] AS Satisfaccion,
+          [Asignado]                   AS Asignado
+        FROM [bi].[UbitsProgreso2026]
+        ORDER BY [Nombre], [Apellido], [Nombre plan], [Nombre contenido]
+      `),
+      pool.request().query(`
+        SELECT NumeroEmpleado, Empresa, Terminal
+        FROM [biUDAT].[STG].[tPlantillaColaboradoresTrayecto]
+        WHERE BActivo=1
+      `),
+    ]);
+    const colabMap = {};
+    rColabs.recordset.forEach(c => { colabMap[c.NumeroEmpleado] = c; });
+    const data = rUbits.recordset.map(r => ({
+      ...r,
+      Empresa:  colabMap[r.NumeroEmpleado]?.Empresa  || '',
+      Terminal: colabMap[r.NumeroEmpleado]?.Terminal || '',
+    }));
+    res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
