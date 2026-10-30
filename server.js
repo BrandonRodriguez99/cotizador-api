@@ -7055,7 +7055,7 @@ app.post('/api/formularios/:id/respuestas', autenticar, async (req, res) => {
 app.get('/api/formularios/respuestas/todas', autenticar, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
-    if (req.usuario.rol !== 'admin') return res.status(403).json({ error: 'Solo admin' });
+    if (!['admin','encargado_vehiculos'].includes(req.usuario.rol)) return res.status(403).json({ error: 'Sin permiso' });
     const rRes = await pool.request()
       .query(`SELECT r.*, f.Nombre AS FormularioNombre
               FROM dbo.FormRespuestas r
@@ -7073,11 +7073,11 @@ app.get('/api/formularios/respuestas/todas', autenticar, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// GET /api/formularios/:id/respuestas — ver respuestas de un formulario (admin)
+// GET /api/formularios/:id/respuestas — ver respuestas de un formulario (admin / encargado_vehiculos)
 app.get('/api/formularios/:id/respuestas', autenticar, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
-    if (req.usuario.rol !== 'admin') return res.status(403).json({ error: 'Solo admin' });
+    if (!['admin','encargado_vehiculos'].includes(req.usuario.rol)) return res.status(403).json({ error: 'Sin permiso' });
     const formId = Number(req.params.id);
 
     const rRes = await pool.request().input('id', sql.Int, formId)
