@@ -6729,6 +6729,87 @@ app.put('/api/diesel/precio', autenticar, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ─── Diesel Público (sin autenticación) ──────────────────────────────────────
+
+app.get('/api/diesel/publico/vehiculos', async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const r = await pool.request().query(`
+      SELECT VehiculoId, Marca, Modelo, Placa, Año, Color,
+             LTRIM(RTRIM(Marca + ' ' + Modelo + ' (' + Placa + ')')) AS Nombre
+      FROM dbo.Vehiculos WHERE Activo=1 ORDER BY Marca, Modelo
+    `);
+    res.json(r.recordset);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/diesel/publico/precios', async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const r = await pool.request().query(
+      `SELECT Clave, Valor FROM dbo.ConfigDiesel WHERE Clave IN ('PrecioDiesel','PrecioGasolina','PrecioUrea')`
+    );
+    const map = {};
+    r.recordset.forEach(row => { map[row.Clave] = parseFloat(row.Valor) || 0; });
+    res.json({
+      diesel:   map['PrecioDiesel']   ?? 0,
+      gasolina: map['PrecioGasolina'] ?? 0,
+      urea:     map['PrecioUrea']     ?? 0,
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/diesel/publico/cargas', async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const { vehiculoId, vehiculoNombre, fecha, tipo, litros, kmActual,
+            valorPesos, folioTicket, operadorNombre, urlFotoTicket } = req.body;
+    if (!vehiculoNombre || !fecha || !litros || !kmActual)
+      return res.status(400).json({ error: 'Faltan campos requeridos (vehiculoNombre, fecha, litros, kmActual)' });
+
+    const prevRes = await pool.request()
+      .input('vnombre', sql.NVarChar(200), vehiculoNombre)
+      .input('vtipo',   sql.NVarChar(10),  tipo || 'diesel')
+      .query(`
+        SELECT TOP 1 KmActual FROM dbo.ControlDiesel
+        WHERE VehiculoNombre=@vnombre AND Tipo=@vtipo AND Eliminado=0
+        ORDER BY Fecha DESC, CargaId DESC
+      `);
+    const kmAnterior   = prevRes.recordset[0]?.KmActual ?? null;
+    const kmRecorridos = kmAnterior != null ? (Number(kmActual) - kmAnterior) : null;
+    const rendimiento  = (kmRecorridos != null && Number(litros) > 0)
+      ? Math.round((kmRecorridos / Number(litros)) * 100) / 100
+      : null;
+
+    const r = await pool.request()
+      .input('vid',   sql.Int,            vehiculoId ? Number(vehiculoId) : null)
+      .input('vnom',  sql.NVarChar(200),  vehiculoNombre)
+      .input('fecha', sql.Date,           new Date(fecha))
+      .input('tipo',  sql.NVarChar(10),   tipo || 'diesel')
+      .input('lts',   sql.Decimal(10,2),  Number(litros))
+      .input('kma',   sql.Int,            Number(kmActual))
+      .input('kmant', sql.Int,            kmAnterior)
+      .input('kmrec', sql.Int,            kmRecorridos)
+      .input('rend',  sql.Decimal(10,2),  rendimiento)
+      .input('valor', sql.Decimal(12,2),  valorPesos ? Number(valorPesos) : null)
+      .input('folio', sql.NVarChar(50),   folioTicket || null)
+      .input('oper',  sql.NVarChar(200),  operadorNombre || null)
+      .input('foto',  sql.NVarChar(1000), urlFotoTicket || null)
+      .input('creador', sql.NVarChar(150), operadorNombre || 'Portal Público')
+      .query(`
+        INSERT INTO dbo.ControlDiesel
+          (VehiculoId,VehiculoNombre,Fecha,Tipo,Litros,KmActual,KmAnterior,
+           KmRecorridos,Rendimiento,ValorPesos,FolioTicket,
+           OperadorNombre,UrlFotoTicket,CreadoPor)
+        OUTPUT inserted.CargaId
+        VALUES (@vid,@vnom,@fecha,@tipo,@lts,@kma,@kmant,
+                @kmrec,@rend,@valor,@folio,
+                @oper,@foto,@creador)
+      `);
+    res.json({ cargaId: r.recordset[0].CargaId, rendimiento, kmRecorridos });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // FORMULARIOS
 // ═══════════════════════════════════════════════════════════════════════════════
