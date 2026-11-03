@@ -926,6 +926,12 @@ sql
           `);
         }
 
+        // ── Migración: vista cincos (5S) para admin ──
+        await pool.request().query(`
+          IF NOT EXISTS (SELECT 1 FROM dbo.PermisosRol WHERE Rol='admin' AND Vista='cincos')
+            INSERT INTO dbo.PermisosRol (Rol, Vista) VALUES ('admin','cincos')
+        `);
+
         // ── Módulo DVIR ────────────────────────────────────────────────────────
         await pool.request().query(`
           IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name='DVIR' AND schema_id=SCHEMA_ID('dbo'))
