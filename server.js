@@ -926,6 +926,12 @@ sql
           `);
         }
 
+        // ── Migración: ChampionId en CincoS_Areas ──
+        await pool.request().query(`
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.CincoS_Areas') AND name='ChampionId')
+            ALTER TABLE dbo.CincoS_Areas ADD ChampionId INT NULL
+        `);
+
         // ── Migración: vista cincos (5S) para admin ──
         await pool.request().query(`
           IF NOT EXISTS (SELECT 1 FROM dbo.PermisosRol WHERE Rol='admin' AND Vista='cincos')
@@ -8122,7 +8128,8 @@ app.post('/api/cincos/proyectos', autenticar, async (req, res) => {
               .input('tid', sql.Int, terminalId)
               .input('nombre', sql.NVarChar, a.nombre)
               .input('champion', sql.NVarChar, a.champion || null)
-              .query(`INSERT INTO CincoS_Areas (TerminalId, Nombre, Champion) VALUES (@tid, @nombre, @champion)`);
+              .input('championId', sql.Int, a.championId || null)
+              .query(`INSERT INTO CincoS_Areas (TerminalId, Nombre, Champion, ChampionId) VALUES (@tid, @nombre, @champion, @championId)`);
           }
         }
       }
@@ -8155,11 +8162,131 @@ app.get('/api/cincos/proyectos/:id/areas', autenticar, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
     const r = await pool.request().input('id', sql.Int, parseInt(req.params.id))
-      .query(`SELECT a.AreaId, a.Nombre AS Area, a.Champion, t.Nombre AS Terminal, t.TerminalId
+      .query(`SELECT a.AreaId, a.Nombre AS Area, a.Champion, a.ChampionId, t.Nombre AS Terminal, t.TerminalId
               FROM CincoS_Areas a
               JOIN CincoS_Terminales t ON a.TerminalId = t.TerminalId
               WHERE t.ProyectoId = @id AND a.Activo=1 AND t.Activo=1
               ORDER BY t.Nombre, a.Nombre`);
+    res.json(r.recordset);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Editar proyecto completo ──
+app.put('/api/cincos/proyectos/:id', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const proyectoId = parseInt(req.params.id);
+    const { empresa, gerente, encargado, terminales } = req.body;
+
+    await pool.request()
+      .input('id', sql.Int, proyectoId)
+      .input('empresa', sql.NVarChar, empresa)
+      .input('gerente', sql.NVarChar, gerente || null)
+      .input('encargado', sql.NVarChar, encargado || null)
+      .query(`UPDATE CincoS_Proyectos SET Empresa=@empresa, Gerente=@gerente, Encargado=@encargado WHERE ProyectoId=@id`);
+
+    if (terminales && terminales.length) {
+      // Get existing terminal and area IDs
+      const existingTerminals = await pool.request().input('pid', sql.Int, proyectoId)
+        .query(`SELECT TerminalId FROM CincoS_Terminales WHERE ProyectoId=@pid AND Activo=1`);
+      const existingTermIds = new Set(existingTerminals.recordset.map(t => t.TerminalId));
+
+      const sentTermIds = new Set();
+      for (const t of terminales) {
+        if (t.terminalId) {
+          // Update existing terminal
+          sentTermIds.add(t.terminalId);
+          await pool.request()
+            .input('tid', sql.Int, t.terminalId)
+            .input('nombre', sql.NVarChar, t.nombre)
+            .query(`UPDATE CincoS_Terminales SET Nombre=@nombre WHERE TerminalId=@tid`);
+
+          const existingAreas = await pool.request().input('tid', sql.Int, t.terminalId)
+            .query(`SELECT AreaId FROM CincoS_Areas WHERE TerminalId=@tid AND Activo=1`);
+          const existingAreaIds = new Set(existingAreas.recordset.map(a => a.AreaId));
+          const sentAreaIds = new Set();
+
+          if (t.areas && t.areas.length) {
+            for (const a of t.areas) {
+              if (a.areaId) {
+                sentAreaIds.add(a.areaId);
+                await pool.request()
+                  .input('aid', sql.Int, a.areaId)
+                  .input('nombre', sql.NVarChar, a.nombre)
+                  .input('champion', sql.NVarChar, a.champion || null)
+                  .input('championId', sql.Int, a.championId || null)
+                  .query(`UPDATE CincoS_Areas SET Nombre=@nombre, Champion=@champion, ChampionId=@championId WHERE AreaId=@aid`);
+              } else {
+                await pool.request()
+                  .input('tid', sql.Int, t.terminalId)
+                  .input('nombre', sql.NVarChar, a.nombre)
+                  .input('champion', sql.NVarChar, a.champion || null)
+                  .input('championId', sql.Int, a.championId || null)
+                  .query(`INSERT INTO CincoS_Areas (TerminalId, Nombre, Champion, ChampionId) VALUES (@tid, @nombre, @champion, @championId)`);
+              }
+            }
+          }
+          // Soft-delete removed areas
+          for (const id of existingAreaIds) {
+            if (!sentAreaIds.has(id)) {
+              await pool.request().input('aid', sql.Int, id).query(`UPDATE CincoS_Areas SET Activo=0 WHERE AreaId=@aid`);
+            }
+          }
+        } else {
+          // New terminal
+          const tr = await pool.request()
+            .input('pid', sql.Int, proyectoId)
+            .input('nombre', sql.NVarChar, t.nombre)
+            .query(`INSERT INTO CincoS_Terminales (ProyectoId, Nombre) OUTPUT INSERTED.TerminalId VALUES (@pid, @nombre)`);
+          const newTid = tr.recordset[0].TerminalId;
+          sentTermIds.add(newTid);
+          if (t.areas && t.areas.length) {
+            for (const a of t.areas) {
+              await pool.request()
+                .input('tid', sql.Int, newTid)
+                .input('nombre', sql.NVarChar, a.nombre)
+                .input('champion', sql.NVarChar, a.champion || null)
+                .input('championId', sql.Int, a.championId || null)
+                .query(`INSERT INTO CincoS_Areas (TerminalId, Nombre, Champion, ChampionId) VALUES (@tid, @nombre, @champion, @championId)`);
+            }
+          }
+        }
+      }
+      // Soft-delete removed terminals
+      for (const id of existingTermIds) {
+        if (!sentTermIds.has(id)) {
+          await pool.request().input('tid', sql.Int, id).query(`UPDATE CincoS_Terminales SET Activo=0 WHERE TerminalId=@tid`);
+          await pool.request().input('tid', sql.Int, id).query(`UPDATE CincoS_Areas SET Activo=0 WHERE TerminalId=@tid`);
+        }
+      }
+    }
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Proyecto asignado a un champion (por UsuarioId) ──
+app.get('/api/cincos/mi-proyecto', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const userId = req.usuario.id;
+    const r = await pool.request().input('uid', sql.Int, userId)
+      .query(`SELECT DISTINCT p.*
+              FROM CincoS_Proyectos p
+              JOIN CincoS_Terminales t ON p.ProyectoId = t.ProyectoId
+              JOIN CincoS_Areas a ON t.TerminalId = a.TerminalId
+              WHERE a.ChampionId = @uid AND p.Activo=1 AND t.Activo=1 AND a.Activo=1`);
+    if (r.recordset.length) return res.json(r.recordset[0]);
+    // Fallback: return first project (admin)
+    const all = await pool.request().query(`SELECT TOP 1 * FROM CincoS_Proyectos WHERE Activo=1 ORDER BY FechaCreacion DESC`);
+    res.json(all.recordset[0] || null);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Lista simple de usuarios (para selector champion) ──
+app.get('/api/cincos/usuarios', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const r = await pool.request().query(`SELECT UsuarioId, Nombre, Correo FROM dbo.Usuarios WHERE Activo=1 ORDER BY Nombre`);
     res.json(r.recordset);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
