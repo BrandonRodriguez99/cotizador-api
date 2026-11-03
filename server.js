@@ -1256,6 +1256,79 @@ sql
         `);
         console.log('✅ Tablas Formularios aseguradas');
 
+        // ── Tablas 5S ──────────────────────────────────────────────────────
+        await pool.request().query(`
+          IF OBJECT_ID('dbo.CincoS_Proyectos','U') IS NULL
+          BEGIN
+            CREATE TABLE dbo.CincoS_Proyectos (
+              ProyectoId      INT IDENTITY(1,1) PRIMARY KEY,
+              Empresa         NVARCHAR(250) NOT NULL,
+              Gerente         NVARCHAR(250) NULL,
+              Encargado       NVARCHAR(250) NULL,
+              Activo          BIT NOT NULL DEFAULT 1,
+              FechaCreacion   DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+            );
+          END
+
+          IF OBJECT_ID('dbo.CincoS_Terminales','U') IS NULL
+          BEGIN
+            CREATE TABLE dbo.CincoS_Terminales (
+              TerminalId  INT IDENTITY(1,1) PRIMARY KEY,
+              ProyectoId  INT NOT NULL,
+              Nombre      NVARCHAR(250) NOT NULL,
+              Activo      BIT NOT NULL DEFAULT 1,
+              FOREIGN KEY (ProyectoId) REFERENCES dbo.CincoS_Proyectos(ProyectoId)
+            );
+          END
+
+          IF OBJECT_ID('dbo.CincoS_Areas','U') IS NULL
+          BEGIN
+            CREATE TABLE dbo.CincoS_Areas (
+              AreaId      INT IDENTITY(1,1) PRIMARY KEY,
+              TerminalId  INT NOT NULL,
+              Nombre      NVARCHAR(250) NOT NULL,
+              Champion    NVARCHAR(250) NULL,
+              Activo      BIT NOT NULL DEFAULT 1,
+              FOREIGN KEY (TerminalId) REFERENCES dbo.CincoS_Terminales(TerminalId)
+            );
+          END
+
+          IF OBJECT_ID('dbo.CincoS_Elementos','U') IS NULL
+          BEGIN
+            CREATE TABLE dbo.CincoS_Elementos (
+              ElementoId        INT IDENTITY(1,1) PRIMARY KEY,
+              AreaId            INT NOT NULL,
+              Nombre            NVARCHAR(250) NOT NULL,
+              Foto              NVARCHAR(500) NULL,
+              Cantidad          INT NOT NULL DEFAULT 1,
+              Clasificacion     VARCHAR(20) NOT NULL,
+              FrecuenciaUso     VARCHAR(20) NOT NULL,
+              Estado            VARCHAR(30) NOT NULL,
+              AccionRecomendada VARCHAR(30) NULL,
+              FechaRegistro     DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+              RegistradoPor     NVARCHAR(250) NULL,
+              FOREIGN KEY (AreaId) REFERENCES dbo.CincoS_Areas(AreaId)
+            );
+          END
+
+          IF OBJECT_ID('dbo.CincoS_Acciones','U') IS NULL
+          BEGIN
+            CREATE TABLE dbo.CincoS_Acciones (
+              AccionId          INT IDENTITY(1,1) PRIMARY KEY,
+              ElementoId        INT NOT NULL,
+              Tipo              VARCHAR(20) NOT NULL,
+              Descripcion       NVARCHAR(500) NULL,
+              Responsable       NVARCHAR(250) NULL,
+              FechaCompromiso   DATE NULL,
+              Estatus           VARCHAR(20) NOT NULL DEFAULT 'pendiente',
+              FechaCompletado   DATETIME2 NULL,
+              Notas             NVARCHAR(500) NULL,
+              FOREIGN KEY (ElementoId) REFERENCES dbo.CincoS_Elementos(ElementoId)
+            );
+          END
+        `);
+        console.log('✅ Tablas 5S aseguradas');
+
       } catch (e) {
         console.log("❌ Error asegurando tablas:", e);
       }
@@ -7993,6 +8066,275 @@ app.get('/api/academia/buscar-empleados', autenticar, async (req, res) => {
     } catch (e2) {
       res.status(500).json({ error: e2.message });
     }
+  }
+});
+
+// ─── 5S ─────────────────────────────────────────────────────────────────────
+
+// Lógica de acción recomendada
+function calcularAccionRecomendada(clasificacion, frecuencia, estado) {
+  if (clasificacion === 'innecesario') return 'eliminar';
+  if (clasificacion === 'dudoso') return 'red_tag';
+  // clasificacion === 'necesario'
+  if (estado === 'no_funciona') return 'eliminar';
+  if (estado === 'necesita_reparacion') return 'reparar';
+  if (estado === 'evaluar') return 'red_tag';
+  // funciona
+  if (frecuencia === 'ocasional') return 'reubicar';
+  return 'mantener';
+}
+
+// ── Proyectos ──
+app.get('/api/cincos/proyectos', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const r = await pool.request().query(`SELECT * FROM CincoS_Proyectos WHERE Activo=1 ORDER BY FechaCreacion DESC`);
+    res.json(r.recordset);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/cincos/proyectos', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const { empresa, gerente, encargado, terminales } = req.body;
+    const r = await pool.request()
+      .input('empresa', sql.NVarChar, empresa)
+      .input('gerente', sql.NVarChar, gerente || null)
+      .input('encargado', sql.NVarChar, encargado || null)
+      .query(`INSERT INTO CincoS_Proyectos (Empresa, Gerente, Encargado) OUTPUT INSERTED.ProyectoId VALUES (@empresa, @gerente, @encargado)`);
+    const proyectoId = r.recordset[0].ProyectoId;
+    if (terminales && terminales.length) {
+      for (const t of terminales) {
+        const tr = await pool.request()
+          .input('pid', sql.Int, proyectoId)
+          .input('nombre', sql.NVarChar, t.nombre)
+          .query(`INSERT INTO CincoS_Terminales (ProyectoId, Nombre) OUTPUT INSERTED.TerminalId VALUES (@pid, @nombre)`);
+        const terminalId = tr.recordset[0].TerminalId;
+        if (t.areas && t.areas.length) {
+          for (const a of t.areas) {
+            await pool.request()
+              .input('tid', sql.Int, terminalId)
+              .input('nombre', sql.NVarChar, a.nombre)
+              .input('champion', sql.NVarChar, a.champion || null)
+              .query(`INSERT INTO CincoS_Areas (TerminalId, Nombre, Champion) VALUES (@tid, @nombre, @champion)`);
+          }
+        }
+      }
+    }
+    res.json({ ProyectoId: proyectoId });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/cincos/proyectos/:id', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const id = parseInt(req.params.id);
+    const p = await pool.request().input('id', sql.Int, id)
+      .query(`SELECT * FROM CincoS_Proyectos WHERE ProyectoId=@id`);
+    if (!p.recordset.length) return res.status(404).json({ error: 'Proyecto no encontrado' });
+    const t = await pool.request().input('id', sql.Int, id)
+      .query(`SELECT * FROM CincoS_Terminales WHERE ProyectoId=@id AND Activo=1`);
+    const terminales = [];
+    for (const term of t.recordset) {
+      const a = await pool.request().input('tid', sql.Int, term.TerminalId)
+        .query(`SELECT * FROM CincoS_Areas WHERE TerminalId=@tid AND Activo=1`);
+      terminales.push({ ...term, areas: a.recordset });
+    }
+    res.json({ ...p.recordset[0], terminales });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Áreas de un proyecto ──
+app.get('/api/cincos/proyectos/:id/areas', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const r = await pool.request().input('id', sql.Int, parseInt(req.params.id))
+      .query(`SELECT a.AreaId, a.Nombre AS Area, a.Champion, t.Nombre AS Terminal, t.TerminalId
+              FROM CincoS_Areas a
+              JOIN CincoS_Terminales t ON a.TerminalId = t.TerminalId
+              WHERE t.ProyectoId = @id AND a.Activo=1 AND t.Activo=1
+              ORDER BY t.Nombre, a.Nombre`);
+    res.json(r.recordset);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Elementos ──
+app.get('/api/cincos/elementos', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const { areaId, proyectoId } = req.query;
+    let q = `SELECT e.*, a.Nombre AS Area, t.Nombre AS Terminal
+             FROM CincoS_Elementos e
+             JOIN CincoS_Areas a ON e.AreaId = a.AreaId
+             JOIN CincoS_Terminales t ON a.TerminalId = t.TerminalId`;
+    if (areaId) {
+      q += ` WHERE e.AreaId = @areaId`;
+      const r = await pool.request().input('areaId', sql.Int, parseInt(areaId)).query(q + ' ORDER BY e.FechaRegistro DESC');
+      return res.json(r.recordset);
+    }
+    if (proyectoId) {
+      q += ` WHERE t.ProyectoId = @pid`;
+      const r = await pool.request().input('pid', sql.Int, parseInt(proyectoId)).query(q + ' ORDER BY e.FechaRegistro DESC');
+      return res.json(r.recordset);
+    }
+    res.json([]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/cincos/elementos', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const { areaId, nombre, foto, cantidad, clasificacion, frecuenciaUso, estado } = req.body;
+    const accion = calcularAccionRecomendada(clasificacion, frecuenciaUso, estado);
+    const r = await pool.request()
+      .input('areaId', sql.Int, areaId)
+      .input('nombre', sql.NVarChar, nombre)
+      .input('foto', sql.NVarChar, foto || null)
+      .input('cantidad', sql.Int, cantidad || 1)
+      .input('clasificacion', sql.VarChar, clasificacion)
+      .input('frecuencia', sql.VarChar, frecuenciaUso)
+      .input('estado', sql.VarChar, estado)
+      .input('accion', sql.VarChar, accion)
+      .input('registradoPor', sql.NVarChar, req.usuario.nombre || req.usuario.correo)
+      .query(`INSERT INTO CincoS_Elementos (AreaId, Nombre, Foto, Cantidad, Clasificacion, FrecuenciaUso, Estado, AccionRecomendada, RegistradoPor)
+              OUTPUT INSERTED.*
+              VALUES (@areaId, @nombre, @foto, @cantidad, @clasificacion, @frecuencia, @estado, @accion, @registradoPor)`);
+    const elemento = r.recordset[0];
+    // Auto-crear acción si no es mantener
+    if (accion !== 'mantener') {
+      const tipo = accion === 'reubicar' ? 'red_tag' : accion;
+      const desc = accion === 'eliminar' ? `Eliminar: ${nombre}`
+        : accion === 'reparar' ? `Reparar: ${nombre}`
+        : `Evaluar/Reubicar: ${nombre}`;
+      await pool.request()
+        .input('eid', sql.Int, elemento.ElementoId)
+        .input('tipo', sql.VarChar, tipo)
+        .input('desc', sql.NVarChar, desc)
+        .query(`INSERT INTO CincoS_Acciones (ElementoId, Tipo, Descripcion) VALUES (@eid, @tipo, @desc)`);
+    }
+    res.json(elemento);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/api/cincos/elementos/:id', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const { nombre, foto, cantidad, clasificacion, frecuenciaUso, estado } = req.body;
+    const accion = calcularAccionRecomendada(clasificacion, frecuenciaUso, estado);
+    await pool.request()
+      .input('id', sql.Int, parseInt(req.params.id))
+      .input('nombre', sql.NVarChar, nombre)
+      .input('foto', sql.NVarChar, foto || null)
+      .input('cantidad', sql.Int, cantidad || 1)
+      .input('clasificacion', sql.VarChar, clasificacion)
+      .input('frecuencia', sql.VarChar, frecuenciaUso)
+      .input('estado', sql.VarChar, estado)
+      .input('accion', sql.VarChar, accion)
+      .query(`UPDATE CincoS_Elementos SET Nombre=@nombre, Foto=@foto, Cantidad=@cantidad,
+              Clasificacion=@clasificacion, FrecuenciaUso=@frecuencia, Estado=@estado, AccionRecomendada=@accion
+              WHERE ElementoId=@id`);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/cincos/elementos/:id', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const id = parseInt(req.params.id);
+    await pool.request().input('id', sql.Int, id).query(`DELETE FROM CincoS_Acciones WHERE ElementoId=@id`);
+    await pool.request().input('id', sql.Int, id).query(`DELETE FROM CincoS_Elementos WHERE ElementoId=@id`);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Acciones ──
+app.get('/api/cincos/acciones', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const { proyectoId, tipo, estatus } = req.query;
+    let q = `SELECT ac.*, e.Nombre AS Elemento, e.Foto, e.Cantidad, e.Clasificacion, e.FrecuenciaUso, e.Estado AS EstadoElemento,
+                    a.Nombre AS Area, t.Nombre AS Terminal
+             FROM CincoS_Acciones ac
+             JOIN CincoS_Elementos e ON ac.ElementoId = e.ElementoId
+             JOIN CincoS_Areas a ON e.AreaId = a.AreaId
+             JOIN CincoS_Terminales t ON a.TerminalId = t.TerminalId
+             WHERE t.ProyectoId = @pid`;
+    const request = pool.request().input('pid', sql.Int, parseInt(proyectoId));
+    if (tipo) { q += ` AND ac.Tipo = @tipo`; request.input('tipo', sql.VarChar, tipo); }
+    if (estatus) { q += ` AND ac.Estatus = @estatus`; request.input('estatus', sql.VarChar, estatus); }
+    q += ` ORDER BY CASE ac.Estatus WHEN 'pendiente' THEN 0 WHEN 'en_proceso' THEN 1 ELSE 2 END, ac.AccionId DESC`;
+    const r = await request.query(q);
+    res.json(r.recordset);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/api/cincos/acciones/:id', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const { estatus, notas, responsable, fechaCompromiso } = req.body;
+    const sets = ['Estatus=@estatus'];
+    const request = pool.request()
+      .input('id', sql.Int, parseInt(req.params.id))
+      .input('estatus', sql.VarChar, estatus);
+    if (notas !== undefined) { sets.push('Notas=@notas'); request.input('notas', sql.NVarChar, notas); }
+    if (responsable !== undefined) { sets.push('Responsable=@resp'); request.input('resp', sql.NVarChar, responsable); }
+    if (fechaCompromiso !== undefined) { sets.push('FechaCompromiso=@fecha'); request.input('fecha', sql.Date, fechaCompromiso); }
+    if (estatus === 'completado') sets.push('FechaCompletado=SYSUTCDATETIME()');
+    await request.query(`UPDATE CincoS_Acciones SET ${sets.join(', ')} WHERE AccionId=@id`);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Dashboard / KPIs ──
+app.get('/api/cincos/dashboard/:proyectoId', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const pid = parseInt(req.params.proyectoId);
+    const request = pool.request().input('pid', sql.Int, pid);
+    const r = await request.query(`
+      SELECT
+        (SELECT COUNT(*) FROM CincoS_Acciones ac JOIN CincoS_Elementos e ON ac.ElementoId=e.ElementoId JOIN CincoS_Areas a ON e.AreaId=a.AreaId JOIN CincoS_Terminales t ON a.TerminalId=t.TerminalId WHERE t.ProyectoId=@pid AND ac.Tipo='eliminar') AS totalEliminar,
+        (SELECT COUNT(*) FROM CincoS_Acciones ac JOIN CincoS_Elementos e ON ac.ElementoId=e.ElementoId JOIN CincoS_Areas a ON e.AreaId=a.AreaId JOIN CincoS_Terminales t ON a.TerminalId=t.TerminalId WHERE t.ProyectoId=@pid AND ac.Tipo='eliminar' AND ac.Estatus='completado') AS completadosEliminar,
+        (SELECT COUNT(*) FROM CincoS_Acciones ac JOIN CincoS_Elementos e ON ac.ElementoId=e.ElementoId JOIN CincoS_Areas a ON e.AreaId=a.AreaId JOIN CincoS_Terminales t ON a.TerminalId=t.TerminalId WHERE t.ProyectoId=@pid AND ac.Tipo='reparar') AS totalReparar,
+        (SELECT COUNT(*) FROM CincoS_Acciones ac JOIN CincoS_Elementos e ON ac.ElementoId=e.ElementoId JOIN CincoS_Areas a ON e.AreaId=a.AreaId JOIN CincoS_Terminales t ON a.TerminalId=t.TerminalId WHERE t.ProyectoId=@pid AND ac.Tipo='reparar' AND ac.Estatus='completado') AS completadosReparar,
+        (SELECT COUNT(*) FROM CincoS_Acciones ac JOIN CincoS_Elementos e ON ac.ElementoId=e.ElementoId JOIN CincoS_Areas a ON e.AreaId=a.AreaId JOIN CincoS_Terminales t ON a.TerminalId=t.TerminalId WHERE t.ProyectoId=@pid AND ac.Tipo='red_tag') AS totalRedTag,
+        (SELECT COUNT(*) FROM CincoS_Acciones ac JOIN CincoS_Elementos e ON ac.ElementoId=e.ElementoId JOIN CincoS_Areas a ON e.AreaId=a.AreaId JOIN CincoS_Terminales t ON a.TerminalId=t.TerminalId WHERE t.ProyectoId=@pid AND ac.Tipo='red_tag' AND ac.Estatus='completado') AS completadosRedTag,
+        (SELECT COUNT(*) FROM CincoS_Elementos e JOIN CincoS_Areas a ON e.AreaId=a.AreaId JOIN CincoS_Terminales t ON a.TerminalId=t.TerminalId WHERE t.ProyectoId=@pid) AS totalElementos
+    `);
+    // KPIs por área
+    const r2 = await pool.request().input('pid', sql.Int, pid).query(`
+      SELECT a.AreaId, a.Nombre AS Area, t.Nombre AS Terminal,
+        COUNT(DISTINCT e.ElementoId) AS elementos,
+        SUM(CASE WHEN ac.Tipo='eliminar' THEN 1 ELSE 0 END) AS eliminar,
+        SUM(CASE WHEN ac.Tipo='eliminar' AND ac.Estatus='completado' THEN 1 ELSE 0 END) AS eliminarOk,
+        SUM(CASE WHEN ac.Tipo='reparar' THEN 1 ELSE 0 END) AS reparar,
+        SUM(CASE WHEN ac.Tipo='reparar' AND ac.Estatus='completado' THEN 1 ELSE 0 END) AS repararOk,
+        SUM(CASE WHEN ac.Tipo='red_tag' THEN 1 ELSE 0 END) AS redTag,
+        SUM(CASE WHEN ac.Tipo='red_tag' AND ac.Estatus='completado' THEN 1 ELSE 0 END) AS redTagOk
+      FROM CincoS_Areas a
+      JOIN CincoS_Terminales t ON a.TerminalId = t.TerminalId
+      LEFT JOIN CincoS_Elementos e ON e.AreaId = a.AreaId
+      LEFT JOIN CincoS_Acciones ac ON ac.ElementoId = e.ElementoId
+      WHERE t.ProyectoId = @pid AND a.Activo=1
+      GROUP BY a.AreaId, a.Nombre, t.Nombre
+      ORDER BY t.Nombre, a.Nombre
+    `);
+    res.json({ resumen: r.recordset[0], porArea: r2.recordset });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Upload foto 5S ──
+app.post('/api/upload/foto-5s', autenticar, async (req, res) => {
+  try {
+    const { base64 } = req.body;
+    if (!base64) return res.status(400).json({ error: 'No se recibió imagen' });
+    const result = await cloudinary.uploader.upload(base64, {
+      folder: '5s',
+      resource_type: 'image',
+    });
+    res.json({ url: result.secure_url });
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'No se pudo subir la imagen' });
   }
 });
 
