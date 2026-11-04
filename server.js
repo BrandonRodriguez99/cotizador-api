@@ -7952,6 +7952,17 @@ app.put('/api/academia/solicitudes-catalogo/:id/rechazar', autenticar, async (re
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+app.delete('/api/academia/solicitudes-catalogo/:id', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const id = Number(req.params.id);
+    await pool.request()
+      .input('id', sql.Int, id)
+      .query('DELETE FROM SolicitudesCatalogoCursos WHERE SolicitudId=@id');
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/api/academia/calendario', autenticar, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
