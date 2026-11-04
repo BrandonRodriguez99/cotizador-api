@@ -8459,7 +8459,7 @@ app.get('/api/cincos/acciones', autenticar, async (req, res) => {
     if (!ensurePool(res)) return;
     const { proyectoId, tipo, estatus } = req.query;
     let q = `SELECT ac.*, e.Nombre AS Elemento, e.Foto, e.Cantidad, e.Clasificacion, e.FrecuenciaUso, e.Estado AS EstadoElemento,
-                    a.Nombre AS Area, t.Nombre AS Terminal
+                    a.Nombre AS Area, a.AreaId, a.Champion, t.Nombre AS Terminal
              FROM CincoS_Acciones ac
              JOIN CincoS_Elementos e ON ac.ElementoId = e.ElementoId
              JOIN CincoS_Areas a ON e.AreaId = a.AreaId
@@ -8509,7 +8509,7 @@ app.get('/api/cincos/dashboard/:proyectoId', autenticar, async (req, res) => {
     `);
     // KPIs por área
     const r2 = await pool.request().input('pid', sql.Int, pid).query(`
-      SELECT a.AreaId, a.Nombre AS Area, t.Nombre AS Terminal,
+      SELECT a.AreaId, a.Nombre AS Area, t.Nombre AS Terminal, t.TerminalId, a.Champion, a.ChampionId,
         COUNT(DISTINCT e.ElementoId) AS elementos,
         SUM(CASE WHEN ac.Tipo='eliminar' THEN 1 ELSE 0 END) AS eliminar,
         SUM(CASE WHEN ac.Tipo='eliminar' AND ac.Estatus='completado' THEN 1 ELSE 0 END) AS eliminarOk,
@@ -8522,7 +8522,7 @@ app.get('/api/cincos/dashboard/:proyectoId', autenticar, async (req, res) => {
       LEFT JOIN CincoS_Elementos e ON e.AreaId = a.AreaId
       LEFT JOIN CincoS_Acciones ac ON ac.ElementoId = e.ElementoId
       WHERE t.ProyectoId = @pid AND a.Activo=1
-      GROUP BY a.AreaId, a.Nombre, t.Nombre
+      GROUP BY a.AreaId, a.Nombre, t.Nombre, t.TerminalId, a.Champion, a.ChampionId
       ORDER BY t.Nombre, a.Nombre
     `);
     res.json({ resumen: r.recordset[0], porArea: r2.recordset });
