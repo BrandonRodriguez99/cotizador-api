@@ -8110,12 +8110,9 @@ app.get('/api/academia/buscar-empleados', autenticar, async (req, res) => {
 function calcularAccionRecomendada(clasificacion, frecuencia, estado) {
   if (clasificacion === 'innecesario') return 'eliminar';
   if (clasificacion === 'dudoso') return 'red_tag';
-  // clasificacion === 'necesario'
+  if (estado === 'funciona') return 'mantener';
   if (estado === 'no_funciona') return 'eliminar';
   if (estado === 'necesita_reparacion') return 'reparar';
-  if (estado === 'evaluar') return 'red_tag';
-  // funciona
-  if (frecuencia === 'ocasional') return 'reubicar';
   return 'mantener';
 }
 
@@ -8349,8 +8346,8 @@ app.post('/api/cincos/elementos', autenticar, async (req, res) => {
       .input('foto', sql.NVarChar, foto || null)
       .input('cantidad', sql.Int, cantidad || 1)
       .input('clasificacion', sql.VarChar, clasificacion)
-      .input('frecuencia', sql.VarChar, frecuenciaUso)
-      .input('estado', sql.VarChar, estado)
+      .input('frecuencia', sql.VarChar, frecuenciaUso || '')
+      .input('estado', sql.VarChar, estado || '')
       .input('accion', sql.VarChar, accionRecomendada)
       .input('accionManual', sql.VarChar, accionManual || null)
       .input('registradoPor', sql.NVarChar, req.usuario.nombre || req.usuario.correo)
@@ -8406,8 +8403,8 @@ app.put('/api/cincos/elementos/:id', autenticar, async (req, res) => {
       .input('foto', sql.NVarChar, foto || null)
       .input('cantidad', sql.Int, cantidad || 1)
       .input('clasificacion', sql.VarChar, clasificacion)
-      .input('frecuencia', sql.VarChar, frecuenciaUso)
-      .input('estado', sql.VarChar, estado)
+      .input('frecuencia', sql.VarChar, frecuenciaUso || '')
+      .input('estado', sql.VarChar, estado || '')
       .input('accion', sql.VarChar, accion)
       .input('accionManual', sql.VarChar, accionManual || null)
       .query(`UPDATE CincoS_Elementos SET Nombre=@nombre, Foto=@foto, Cantidad=@cantidad,
