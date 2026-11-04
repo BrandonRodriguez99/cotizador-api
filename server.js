@@ -8550,8 +8550,25 @@ app.get('/api/cincos/notificaciones', autenticar, async (req, res) => {
     if (!ensurePool(res)) return;
     const uid = req.usuario.id || req.usuario.UsuarioId;
     if (!uid) return res.json([]);
-    const r = await pool.request().input('uid', sql.Int, uid)
-      .query(`SELECT TOP 50 * FROM CincoS_Notificaciones WHERE UsuarioId=@uid ORDER BY FechaCreacion DESC`);
+    const rol = req.usuario.rol || '';
+    // Admin or roles with 'cincos' permission see all notifications
+    let verTodas = rol === 'admin';
+    if (!verTodas) {
+      const perm = await pool.request().input('rol', sql.VarChar, rol).input('vista', sql.VarChar, 'cincos')
+        .query(`SELECT 1 AS tiene FROM PermisosRol WHERE Rol=@rol AND Vista=@vista`);
+      verTodas = perm.recordset.length > 0;
+    }
+    let r;
+    if (verTodas) {
+      r = await pool.request()
+        .query(`SELECT TOP 100 n.*, u.Nombre AS UsuarioNombre
+                FROM CincoS_Notificaciones n
+                LEFT JOIN Usuarios u ON n.UsuarioId = u.UsuarioId
+                ORDER BY n.FechaCreacion DESC`);
+    } else {
+      r = await pool.request().input('uid', sql.Int, uid)
+        .query(`SELECT TOP 50 * FROM CincoS_Notificaciones WHERE UsuarioId=@uid ORDER BY FechaCreacion DESC`);
+    }
     res.json(r.recordset);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -8569,8 +8586,19 @@ app.put('/api/cincos/notificaciones/leer-todas', autenticar, async (req, res) =>
   try {
     if (!ensurePool(res)) return;
     const uid = req.usuario.id || req.usuario.UsuarioId;
-    await pool.request().input('uid', sql.Int, uid)
-      .query(`UPDATE CincoS_Notificaciones SET Leida=1 WHERE UsuarioId=@uid AND Leida=0`);
+    const rol = req.usuario.rol || '';
+    let verTodas = rol === 'admin';
+    if (!verTodas) {
+      const perm = await pool.request().input('rol', sql.VarChar, rol).input('vista', sql.VarChar, 'cincos')
+        .query(`SELECT 1 AS tiene FROM PermisosRol WHERE Rol=@rol AND Vista=@vista`);
+      verTodas = perm.recordset.length > 0;
+    }
+    if (verTodas) {
+      await pool.request().query(`UPDATE CincoS_Notificaciones SET Leida=1 WHERE Leida=0`);
+    } else {
+      await pool.request().input('uid', sql.Int, uid)
+        .query(`UPDATE CincoS_Notificaciones SET Leida=1 WHERE UsuarioId=@uid AND Leida=0`);
+    }
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
