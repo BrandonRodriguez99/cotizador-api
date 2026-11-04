@@ -1198,6 +1198,21 @@ sql
               Comentario            NVARCHAR(500) NULL
             )
         `);
+        // Columnas nuevas para solicitudes de catálogo
+        const colsSolicitudes = [
+          { name: 'Modalidad',        type: 'NVARCHAR(50)  NULL' },
+          { name: 'FechaTentativa',    type: 'DATE          NULL' },
+          { name: 'NombreComercial',   type: 'NVARCHAR(300) NULL' },
+          { name: 'RazonSocial',       type: 'NVARCHAR(300) NULL' },
+          { name: 'RequiereConstancia',type: 'BIT           NOT NULL DEFAULT 0' },
+          { name: 'RequiereDC3',       type: 'BIT           NOT NULL DEFAULT 0' },
+        ];
+        for (const c of colsSolicitudes) {
+          await pool.request().query(`
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.SolicitudesCatalogoCursos') AND name='${c.name}')
+              ALTER TABLE dbo.SolicitudesCatalogoCursos ADD ${c.name} ${c.type};
+          `);
+        }
         console.log('✅ Tablas Academia aseguradas');
 
         // ── Formularios ──────────────────────────────────────────────────────────
@@ -7888,7 +7903,7 @@ app.get('/api/academia/solicitudes-catalogo', autenticar, async (req, res) => {
 app.post('/api/academia/solicitudes-catalogo', autenticar, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
-    const { Nombre, Descripcion, TipoCurso, Horas, Costo, DuracionDefaultDias, Justificacion } = req.body;
+    const { Nombre, Descripcion, TipoCurso, Horas, Costo, DuracionDefaultDias, Justificacion, Modalidad, FechaTentativa, NombreComercial, RazonSocial, RequiereConstancia, RequiereDC3 } = req.body;
     if (!Nombre?.trim()) return res.status(400).json({ error: 'Nombre requerido' });
     const r = await pool.request()
       .input('Nombre',              sql.NVarChar(300),  Nombre)
@@ -7898,11 +7913,17 @@ app.post('/api/academia/solicitudes-catalogo', autenticar, async (req, res) => {
       .input('Costo',               sql.Decimal(18,2),  Costo != null ? Number(Costo) : null)
       .input('DuracionDefaultDias', sql.Int,            DuracionDefaultDias != null ? Number(DuracionDefaultDias) : null)
       .input('Justificacion',       sql.NVarChar(1000), Justificacion || null)
+      .input('Modalidad',           sql.NVarChar(50),   Modalidad || null)
+      .input('FechaTentativa',      sql.Date,           FechaTentativa || null)
+      .input('NombreComercial',     sql.NVarChar(300),  NombreComercial || null)
+      .input('RazonSocial',         sql.NVarChar(300),  RazonSocial || null)
+      .input('RequiereConstancia',  sql.Bit,            RequiereConstancia ? 1 : 0)
+      .input('RequiereDC3',         sql.Bit,            RequiereDC3 ? 1 : 0)
       .input('SolicitadoPor',       sql.NVarChar(200),  req.usuario?.nombre || null)
       .query(`INSERT INTO SolicitudesCatalogoCursos
-        (Nombre,Descripcion,TipoCurso,Horas,Costo,DuracionDefaultDias,Justificacion,SolicitadoPor)
+        (Nombre,Descripcion,TipoCurso,Horas,Costo,DuracionDefaultDias,Justificacion,Modalidad,FechaTentativa,NombreComercial,RazonSocial,RequiereConstancia,RequiereDC3,SolicitadoPor)
         OUTPUT INSERTED.*
-        VALUES (@Nombre,@Descripcion,@TipoCurso,@Horas,@Costo,@DuracionDefaultDias,@Justificacion,@SolicitadoPor)`);
+        VALUES (@Nombre,@Descripcion,@TipoCurso,@Horas,@Costo,@DuracionDefaultDias,@Justificacion,@Modalidad,@FechaTentativa,@NombreComercial,@RazonSocial,@RequiereConstancia,@RequiereDC3,@SolicitadoPor)`);
     res.json(r.recordset[0]);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
