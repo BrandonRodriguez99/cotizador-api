@@ -1338,6 +1338,25 @@ sql
               FOREIGN KEY (ElementoId) REFERENCES dbo.CincoS_Elementos(ElementoId)
             );
           END
+
+          -- Tabla de notificaciones 5S
+          IF OBJECT_ID('dbo.CincoS_Notificaciones','U') IS NULL
+          BEGIN
+            CREATE TABLE dbo.CincoS_Notificaciones (
+              NotificacionId  INT IDENTITY(1,1) PRIMARY KEY,
+              UsuarioId       INT NOT NULL,
+              AccionId        INT NULL,
+              Titulo          NVARCHAR(250) NOT NULL,
+              Mensaje         NVARCHAR(500) NOT NULL,
+              Leida           BIT NOT NULL DEFAULT 0,
+              FechaCreacion   DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+              FOREIGN KEY (AccionId) REFERENCES dbo.CincoS_Acciones(AccionId)
+            );
+          END
+
+          -- Migración: AccionManual en CincoS_Elementos
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.CincoS_Elementos') AND name='AccionManual')
+            ALTER TABLE dbo.CincoS_Elementos ADD AccionManual VARCHAR(30) NULL
         `);
         console.log('✅ Tablas 5S aseguradas');
 
@@ -8317,8 +8336,9 @@ app.get('/api/cincos/elementos', autenticar, async (req, res) => {
 app.post('/api/cincos/elementos', autenticar, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
-    const { areaId, nombre, foto, cantidad, clasificacion, frecuenciaUso, estado } = req.body;
-    const accion = calcularAccionRecomendada(clasificacion, frecuenciaUso, estado);
+    const { areaId, nombre, foto, cantidad, clasificacion, frecuenciaUso, estado, accionManual, fechaCompromiso } = req.body;
+    const accionRecomendada = calcularAccionRecomendada(clasificacion, frecuenciaUso, estado);
+    const accionFinal = accionManual || accionRecomendada;
     const r = await pool.request()
       .input('areaId', sql.Int, areaId)
       .input('nombre', sql.NVarChar, nombre)
@@ -8327,23 +8347,45 @@ app.post('/api/cincos/elementos', autenticar, async (req, res) => {
       .input('clasificacion', sql.VarChar, clasificacion)
       .input('frecuencia', sql.VarChar, frecuenciaUso)
       .input('estado', sql.VarChar, estado)
-      .input('accion', sql.VarChar, accion)
+      .input('accion', sql.VarChar, accionRecomendada)
+      .input('accionManual', sql.VarChar, accionManual || null)
       .input('registradoPor', sql.NVarChar, req.usuario.nombre || req.usuario.correo)
-      .query(`INSERT INTO CincoS_Elementos (AreaId, Nombre, Foto, Cantidad, Clasificacion, FrecuenciaUso, Estado, AccionRecomendada, RegistradoPor)
+      .query(`INSERT INTO CincoS_Elementos (AreaId, Nombre, Foto, Cantidad, Clasificacion, FrecuenciaUso, Estado, AccionRecomendada, AccionManual, RegistradoPor)
               OUTPUT INSERTED.*
-              VALUES (@areaId, @nombre, @foto, @cantidad, @clasificacion, @frecuencia, @estado, @accion, @registradoPor)`);
+              VALUES (@areaId, @nombre, @foto, @cantidad, @clasificacion, @frecuencia, @estado, @accion, @accionManual, @registradoPor)`);
     const elemento = r.recordset[0];
-    // Auto-crear acción si no es mantener
-    if (accion !== 'mantener') {
-      const tipo = accion === 'reubicar' ? 'red_tag' : accion;
-      const desc = accion === 'eliminar' ? `Eliminar: ${nombre}`
-        : accion === 'reparar' ? `Reparar: ${nombre}`
-        : `Evaluar/Reubicar: ${nombre}`;
-      await pool.request()
+    // Crear acción basada en la selección manual del Champion
+    if (accionManual && accionManual !== 'mantener') {
+      const desc = accionManual === 'eliminar' ? `Eliminar: ${nombre}`
+        : accionManual === 'reparar' ? `Reparar: ${nombre}`
+        : `Red Tag: ${nombre}`;
+      const accionReq = pool.request()
         .input('eid', sql.Int, elemento.ElementoId)
-        .input('tipo', sql.VarChar, tipo)
-        .input('desc', sql.NVarChar, desc)
-        .query(`INSERT INTO CincoS_Acciones (ElementoId, Tipo, Descripcion) VALUES (@eid, @tipo, @desc)`);
+        .input('tipo', sql.VarChar, accionManual)
+        .input('desc', sql.NVarChar, desc);
+      if (accionManual === 'red_tag' && fechaCompromiso) {
+        accionReq.input('fecha', sql.Date, fechaCompromiso);
+        await accionReq.query(`INSERT INTO CincoS_Acciones (ElementoId, Tipo, Descripcion, FechaCompromiso)
+                               OUTPUT INSERTED.AccionId VALUES (@eid, @tipo, @desc, @fecha)`);
+        // Crear notificaciones de recordatorio para red tags
+        const accionResult = accionReq;
+        const areaInfo = await pool.request().input('areaId', sql.Int, areaId)
+          .query(`SELECT a.ChampionId FROM CincoS_Areas a WHERE a.AreaId=@areaId`);
+        const championId = areaInfo.recordset[0]?.ChampionId;
+        if (championId) {
+          const fc = new Date(fechaCompromiso);
+          const hoy = new Date();
+          const diffDays = Math.round((fc - hoy) / (1000 * 60 * 60 * 24));
+          // Notificación inmediata
+          await pool.request()
+            .input('uid', sql.Int, championId)
+            .input('titulo', sql.NVarChar, `Red Tag asignado: ${nombre}`)
+            .input('msg', sql.NVarChar, `Se registró "${nombre}" como Red Tag con fecha compromiso ${fechaCompromiso}. Requiere evaluación.`)
+            .query(`INSERT INTO CincoS_Notificaciones (UsuarioId, Titulo, Mensaje) VALUES (@uid, @titulo, @msg)`);
+        }
+      } else {
+        await accionReq.query(`INSERT INTO CincoS_Acciones (ElementoId, Tipo, Descripcion) VALUES (@eid, @tipo, @desc)`);
+      }
     }
     res.json(elemento);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -8352,7 +8394,7 @@ app.post('/api/cincos/elementos', autenticar, async (req, res) => {
 app.put('/api/cincos/elementos/:id', autenticar, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
-    const { nombre, foto, cantidad, clasificacion, frecuenciaUso, estado } = req.body;
+    const { nombre, foto, cantidad, clasificacion, frecuenciaUso, estado, accionManual, fechaCompromiso } = req.body;
     const accion = calcularAccionRecomendada(clasificacion, frecuenciaUso, estado);
     await pool.request()
       .input('id', sql.Int, parseInt(req.params.id))
@@ -8363,9 +8405,40 @@ app.put('/api/cincos/elementos/:id', autenticar, async (req, res) => {
       .input('frecuencia', sql.VarChar, frecuenciaUso)
       .input('estado', sql.VarChar, estado)
       .input('accion', sql.VarChar, accion)
+      .input('accionManual', sql.VarChar, accionManual || null)
       .query(`UPDATE CincoS_Elementos SET Nombre=@nombre, Foto=@foto, Cantidad=@cantidad,
-              Clasificacion=@clasificacion, FrecuenciaUso=@frecuencia, Estado=@estado, AccionRecomendada=@accion
+              Clasificacion=@clasificacion, FrecuenciaUso=@frecuencia, Estado=@estado,
+              AccionRecomendada=@accion, AccionManual=@accionManual
               WHERE ElementoId=@id`);
+    // Actualizar acción existente o crear nueva
+    const id = parseInt(req.params.id);
+    if (accionManual && accionManual !== 'mantener') {
+      const existing = await pool.request().input('eid', sql.Int, id)
+        .query(`SELECT AccionId FROM CincoS_Acciones WHERE ElementoId=@eid`);
+      if (existing.recordset.length) {
+        const updReq = pool.request()
+          .input('aid', sql.Int, existing.recordset[0].AccionId)
+          .input('tipo', sql.VarChar, accionManual)
+          .input('desc', sql.NVarChar, `${accionManual === 'eliminar' ? 'Eliminar' : accionManual === 'reparar' ? 'Reparar' : 'Red Tag'}: ${nombre}`);
+        if (accionManual === 'red_tag' && fechaCompromiso) {
+          updReq.input('fecha', sql.Date, fechaCompromiso);
+          await updReq.query(`UPDATE CincoS_Acciones SET Tipo=@tipo, Descripcion=@desc, FechaCompromiso=@fecha WHERE AccionId=@aid`);
+        } else {
+          await updReq.query(`UPDATE CincoS_Acciones SET Tipo=@tipo, Descripcion=@desc WHERE AccionId=@aid`);
+        }
+      } else {
+        const insReq = pool.request()
+          .input('eid', sql.Int, id)
+          .input('tipo', sql.VarChar, accionManual)
+          .input('desc', sql.NVarChar, `${accionManual === 'eliminar' ? 'Eliminar' : accionManual === 'reparar' ? 'Reparar' : 'Red Tag'}: ${nombre}`);
+        if (accionManual === 'red_tag' && fechaCompromiso) {
+          insReq.input('fecha', sql.Date, fechaCompromiso);
+          await insReq.query(`INSERT INTO CincoS_Acciones (ElementoId, Tipo, Descripcion, FechaCompromiso) VALUES (@eid, @tipo, @desc, @fecha)`);
+        } else {
+          await insReq.query(`INSERT INTO CincoS_Acciones (ElementoId, Tipo, Descripcion) VALUES (@eid, @tipo, @desc)`);
+        }
+      }
+    }
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -8470,6 +8543,93 @@ app.post('/api/upload/foto-5s', autenticar, async (req, res) => {
     res.status(500).json({ error: err.message || 'No se pudo subir la imagen' });
   }
 });
+
+// ── Notificaciones 5S ──
+app.get('/api/cincos/notificaciones', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const uid = req.usuario.id || req.usuario.UsuarioId;
+    if (!uid) return res.json([]);
+    const r = await pool.request().input('uid', sql.Int, uid)
+      .query(`SELECT TOP 50 * FROM CincoS_Notificaciones WHERE UsuarioId=@uid ORDER BY FechaCreacion DESC`);
+    res.json(r.recordset);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/api/cincos/notificaciones/:id/leer', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    await pool.request().input('id', sql.Int, parseInt(req.params.id))
+      .query(`UPDATE CincoS_Notificaciones SET Leida=1 WHERE NotificacionId=@id`);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/api/cincos/notificaciones/leer-todas', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const uid = req.usuario.id || req.usuario.UsuarioId;
+    await pool.request().input('uid', sql.Int, uid)
+      .query(`UPDATE CincoS_Notificaciones SET Leida=1 WHERE UsuarioId=@uid AND Leida=0`);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Cron: generar recordatorios para Red Tags con fecha compromiso próxima
+async function generarRecordatoriosRedTag() {
+  try {
+    if (!pool) return;
+    // Red tags pendientes con fecha compromiso en los próximos 3 días o vencidos
+    const r = await pool.request().query(`
+      SELECT ac.AccionId, ac.FechaCompromiso, ac.Descripcion, e.Nombre AS Elemento,
+             a.ChampionId, a.Nombre AS Area, t.Nombre AS Terminal
+      FROM CincoS_Acciones ac
+      JOIN CincoS_Elementos e ON ac.ElementoId = e.ElementoId
+      JOIN CincoS_Areas a ON e.AreaId = a.AreaId
+      JOIN CincoS_Terminales t ON a.TerminalId = t.TerminalId
+      WHERE ac.Tipo = 'red_tag'
+        AND ac.Estatus != 'completado'
+        AND ac.FechaCompromiso IS NOT NULL
+        AND a.ChampionId IS NOT NULL
+        AND DATEDIFF(day, GETDATE(), ac.FechaCompromiso) <= 3
+    `);
+    for (const row of r.recordset) {
+      const diffDays = Math.round((new Date(row.FechaCompromiso) - new Date()) / (1000 * 60 * 60 * 24));
+      // Evitar duplicados: no crear si ya existe una notificación hoy para esta acción
+      const exists = await pool.request()
+        .input('uid', sql.Int, row.ChampionId)
+        .input('aid', sql.Int, row.AccionId)
+        .query(`SELECT 1 FROM CincoS_Notificaciones
+                WHERE UsuarioId=@uid AND AccionId=@aid AND CAST(FechaCreacion AS DATE)=CAST(GETDATE() AS DATE)`);
+      if (exists.recordset.length) continue;
+
+      let titulo, mensaje;
+      if (diffDays < 0) {
+        titulo = `⚠ Red Tag vencido: ${row.Elemento}`;
+        mensaje = `La fecha compromiso para "${row.Elemento}" (${row.Area} — ${row.Terminal}) venció hace ${Math.abs(diffDays)} día(s). Requiere atención inmediata.`;
+      } else if (diffDays === 0) {
+        titulo = `Red Tag vence hoy: ${row.Elemento}`;
+        mensaje = `Hoy vence la fecha compromiso para "${row.Elemento}" (${row.Area} — ${row.Terminal}).`;
+      } else {
+        titulo = `Red Tag próximo a vencer: ${row.Elemento}`;
+        mensaje = `Faltan ${diffDays} día(s) para la fecha compromiso de "${row.Elemento}" (${row.Area} — ${row.Terminal}).`;
+      }
+      await pool.request()
+        .input('uid', sql.Int, row.ChampionId)
+        .input('aid', sql.Int, row.AccionId)
+        .input('titulo', sql.NVarChar, titulo)
+        .input('msg', sql.NVarChar, mensaje)
+        .query(`INSERT INTO CincoS_Notificaciones (UsuarioId, AccionId, Titulo, Mensaje) VALUES (@uid, @aid, @titulo, @msg)`);
+    }
+  } catch (e) {
+    console.log('⚠️ Error generando recordatorios Red Tag:', e.message);
+  }
+}
+
+// Ejecutar cron cada 6 horas
+setInterval(generarRecordatoriosRedTag, 6 * 60 * 60 * 1000);
+// Primera ejecución a los 30 segundos de iniciar
+setTimeout(generarRecordatoriosRedTag, 30000);
 
 // ─── SERVER ───────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 4000;
