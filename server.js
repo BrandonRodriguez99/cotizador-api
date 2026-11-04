@@ -1357,6 +1357,10 @@ sql
           -- Migración: AccionManual en CincoS_Elementos
           IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.CincoS_Elementos') AND name='AccionManual')
             ALTER TABLE dbo.CincoS_Elementos ADD AccionManual VARCHAR(30) NULL
+
+          -- Migración: AccionRealizada en CincoS_Acciones
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.CincoS_Acciones') AND name='AccionRealizada')
+            ALTER TABLE dbo.CincoS_Acciones ADD AccionRealizada NVARCHAR(500) NULL
         `);
         console.log('✅ Tablas 5S aseguradas');
 
@@ -8477,7 +8481,19 @@ app.get('/api/cincos/acciones', autenticar, async (req, res) => {
 app.put('/api/cincos/acciones/:id', autenticar, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
-    const { estatus, notas, responsable, fechaCompromiso } = req.body;
+    const { estatus, notas, responsable, fechaCompromiso, accionRealizada } = req.body;
+    // Red Tags require accionRealizada to be completed
+    if (estatus === 'completado') {
+      const check = await pool.request().input('id', sql.Int, parseInt(req.params.id))
+        .query(`SELECT Tipo, AccionRealizada FROM CincoS_Acciones WHERE AccionId=@id`);
+      const accion = check.recordset[0];
+      if (accion && accion.Tipo === 'red_tag') {
+        const textoAccion = accionRealizada || accion.AccionRealizada;
+        if (!textoAccion || !textoAccion.trim()) {
+          return res.status(400).json({ error: 'Debe indicar la acción realizada antes de completar un Red Tag' });
+        }
+      }
+    }
     const sets = ['Estatus=@estatus'];
     const request = pool.request()
       .input('id', sql.Int, parseInt(req.params.id))
@@ -8485,6 +8501,7 @@ app.put('/api/cincos/acciones/:id', autenticar, async (req, res) => {
     if (notas !== undefined) { sets.push('Notas=@notas'); request.input('notas', sql.NVarChar, notas); }
     if (responsable !== undefined) { sets.push('Responsable=@resp'); request.input('resp', sql.NVarChar, responsable); }
     if (fechaCompromiso !== undefined) { sets.push('FechaCompromiso=@fecha'); request.input('fecha', sql.Date, fechaCompromiso); }
+    if (accionRealizada !== undefined) { sets.push('AccionRealizada=@accionRealizada'); request.input('accionRealizada', sql.NVarChar, accionRealizada); }
     if (estatus === 'completado') sets.push('FechaCompletado=SYSUTCDATETIME()');
     await request.query(`UPDATE CincoS_Acciones SET ${sets.join(', ')} WHERE AccionId=@id`);
     res.json({ ok: true });
