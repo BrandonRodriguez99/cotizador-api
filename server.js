@@ -5311,6 +5311,27 @@ app.put('/api/seguridad/ordenes-vehiculo/:id/llegada', autenticar, async (req, r
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+app.put('/api/seguridad/ordenes-vehiculo/:id/km', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const id = Number(req.params.id);
+    const { KmInicial, KmFinal } = req.body;
+    const rq = pool.request().input('id', sql.Int, id);
+    const sets = [];
+    if (KmInicial !== undefined) {
+      rq.input('KmInicial', sql.Decimal(10,2), KmInicial != null && KmInicial !== '' ? Number(KmInicial) : null);
+      sets.push('KmInicial=@KmInicial');
+    }
+    if (KmFinal !== undefined) {
+      rq.input('KmFinal', sql.Decimal(10,2), KmFinal != null && KmFinal !== '' ? Number(KmFinal) : null);
+      sets.push('KmFinal=@KmFinal');
+    }
+    if (!sets.length) return res.status(400).json({ error: 'Nada que actualizar' });
+    await rq.query(`UPDATE OrdenesVehiculo SET ${sets.join(', ')} WHERE OrdenVehiculoId=@id`);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ── DELETE endpoints Seguridad ────────────────────────────────────────────────
 
 app.delete('/api/seguridad/vehiculos/:id', autenticar, soloAdminOJefeSeg, async (req, res) => {
