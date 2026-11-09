@@ -5530,6 +5530,22 @@ app.get('/api/public/alumnos-por-generacion', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+app.get('/api/public/operadores-opt', async (req, res) => {
+  try {
+    if (!poolUDAT) return res.status(500).json({ error: 'Sin conexión a UDAT' });
+    const empresaId = Number(req.query.empresaId);
+    if (!empresaId || ![1, 10].includes(empresaId))
+      return res.status(400).json({ error: 'empresaId debe ser 1 (ALA) o 10 (LARMEX)' });
+    const r = await poolUDAT.request().input('empresaId', sql.Int, empresaId).query(`
+      SELECT OperadorNombre
+      FROM STG.OperadoresHomologados
+      WHERE EmpresaId = @empresaId
+      ORDER BY OperadorNombre
+    `);
+    res.json(r.recordset);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.post('/api/public/solicitud-vehiculo', async (req, res) => {
   try {
     if (!ensurePool(res)) return;
