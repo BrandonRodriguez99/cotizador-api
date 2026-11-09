@@ -1240,6 +1240,9 @@ sql
             );
           END
 
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.FormSecciones') AND name='Instrucciones')
+            ALTER TABLE dbo.FormSecciones ADD Instrucciones NVARCHAR(1000) NULL;
+
           IF OBJECT_ID('dbo.FormPreguntas','U') IS NULL
           BEGIN
             CREATE TABLE dbo.FormPreguntas (
@@ -7112,8 +7115,9 @@ app.post('/api/formularios', autenticar, async (req, res) => {
       const sRes = await pool.request()
         .input('fid', sql.Int, formId)
         .input('t', sql.NVarChar(200), sec.titulo || '')
+        .input('inst', sql.NVarChar(1000), sec.instrucciones || null)
         .input('o', sql.Int, si)
-        .query(`INSERT INTO dbo.FormSecciones(FormularioId,Titulo,Orden) OUTPUT INSERTED.SeccionId VALUES(@fid,@t,@o)`);
+        .query(`INSERT INTO dbo.FormSecciones(FormularioId,Titulo,Instrucciones,Orden) OUTPUT INSERTED.SeccionId VALUES(@fid,@t,@inst,@o)`);
       const secId = sRes.recordset[0].SeccionId;
 
       for (let pi = 0; pi < (sec.preguntas || []).length; pi++) {
@@ -7186,8 +7190,9 @@ app.put('/api/formularios/:id', autenticar, async (req, res) => {
       const sRes = await pool.request()
         .input('fid', sql.Int, formId)
         .input('t', sql.NVarChar(200), sec.titulo || '')
+        .input('inst', sql.NVarChar(1000), sec.instrucciones || null)
         .input('o', sql.Int, si)
-        .query(`INSERT INTO dbo.FormSecciones(FormularioId,Titulo,Orden) OUTPUT INSERTED.SeccionId VALUES(@fid,@t,@o)`);
+        .query(`INSERT INTO dbo.FormSecciones(FormularioId,Titulo,Instrucciones,Orden) OUTPUT INSERTED.SeccionId VALUES(@fid,@t,@inst,@o)`);
       const secId = sRes.recordset[0].SeccionId;
 
       for (let pi = 0; pi < (sec.preguntas || []).length; pi++) {
