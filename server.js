@@ -5524,7 +5524,7 @@ app.get('/api/public/alumnos-por-generacion', async (req, res) => {
       FROM dbo.Operador o
       INNER JOIN AplicacionUnica a ON a.OperadorId = o.OperadorId AND a.rn = 1
       WHERE (o.Eliminado = 0 OR o.Eliminado IS NULL)
-      ORDER BY o.ApellidoPaterno, o.ApellidoMaterno, o.Nombre
+      ORDER BY o.Matricula
     `);
     res.json(r.recordset);
   } catch (err) { res.status(500).json({ error: err.message }); }
