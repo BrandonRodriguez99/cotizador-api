@@ -68,6 +68,7 @@ _cpUDAT.connect()
   .then(p => { poolUDAT = p; console.log('✅ Conectado a UDAT'); })
   .catch(e => console.log('❌ Error UDAT:', e.message));
 
+
 // CONEXIÓN SQL
 let pool;
 let visitasPK   = 'VisitaId'; // nombre real de la PK de Visitas, detectado al startup
@@ -5532,13 +5533,13 @@ app.get('/api/public/alumnos-por-generacion', async (req, res) => {
 
 app.get('/api/public/operadores-opt', async (req, res) => {
   try {
-    if (!poolUDAT) return res.status(500).json({ error: 'Sin conexión a UDAT' });
+    if (!ensurePool(res)) return;
     const empresaId = Number(req.query.empresaId);
     if (!empresaId || ![1, 10].includes(empresaId))
       return res.status(400).json({ error: 'empresaId debe ser 1 (ALA) o 10 (LARMEX)' });
-    const r = await poolUDAT.request().input('empresaId', sql.Int, empresaId).query(`
+    const r = await pool.request().input('empresaId', sql.Int, empresaId).query(`
       SELECT OperadorNombre
-      FROM biUDAT.STG.OperadoresHomologados
+      FROM [STG].[OperadoresHomologados]
       WHERE EmpresaId = @empresaId
       ORDER BY OperadorNombre
     `);
