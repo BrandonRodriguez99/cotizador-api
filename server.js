@@ -5677,7 +5677,7 @@ app.get('/api/public/portal/:slug', async (req, res) => {
       .query(`SELECT f.FormularioId, f.Nombre, f.Descripcion, f.Slug
               FROM dbo.Formularios f
               INNER JOIN dbo.PortalFormularios pf ON pf.FormularioId=f.FormularioId
-              WHERE pf.PortalId=@pid AND f.Activo=1
+              WHERE pf.PortalId=@pid
               ORDER BY f.Nombre`);
     res.json({ ...portal, formularios: f.recordset });
   } catch (err) { res.status(500).json({ error: err.message }); }
