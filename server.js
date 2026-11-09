@@ -5547,6 +5547,7 @@ app.get('/api/public/operadores-opt', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+
 app.post('/api/public/solicitud-vehiculo', async (req, res) => {
   try {
     if (!ensurePool(res)) return;
