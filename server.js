@@ -5538,7 +5538,7 @@ app.get('/api/public/operadores-opt', async (req, res) => {
       return res.status(400).json({ error: 'empresaId debe ser 1 (ALA) o 10 (LARMEX)' });
     const r = await poolUDAT.request().input('empresaId', sql.Int, empresaId).query(`
       SELECT OperadorNombre
-      FROM STG.OperadoresHomologados
+      FROM biUDAT.STG.OperadoresHomologados
       WHERE EmpresaId = @empresaId
       ORDER BY OperadorNombre
     `);
