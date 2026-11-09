@@ -1243,6 +1243,27 @@ sql
           IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.FormSecciones') AND name='Instrucciones')
             ALTER TABLE dbo.FormSecciones ADD Instrucciones NVARCHAR(1000) NULL;
 
+          IF OBJECT_ID('dbo.Portales','U') IS NULL
+          BEGIN
+            CREATE TABLE dbo.Portales (
+              PortalId      INT IDENTITY(1,1) PRIMARY KEY,
+              Nombre        NVARCHAR(200) NOT NULL,
+              Slug          NVARCHAR(100) NOT NULL UNIQUE,
+              Descripcion   NVARCHAR(500) NULL,
+              Activo        BIT NOT NULL DEFAULT 1,
+              FechaCreacion DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+            );
+          END
+
+          IF OBJECT_ID('dbo.PortalFormularios','U') IS NULL
+          BEGIN
+            CREATE TABLE dbo.PortalFormularios (
+              PortalFormularioId INT IDENTITY(1,1) PRIMARY KEY,
+              PortalId           INT NOT NULL,
+              FormularioId       INT NOT NULL
+            );
+          END
+
           IF OBJECT_ID('dbo.FormPreguntas','U') IS NULL
           BEGIN
             CREATE TABLE dbo.FormPreguntas (
@@ -5571,6 +5592,96 @@ app.get('/api/public/operadores-opt', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── Portales personalizados ───────────────────────────────────────────────────
+
+app.get('/api/portales', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const r = await pool.request().query('SELECT * FROM dbo.Portales ORDER BY Nombre');
+    const pf = await pool.request().query('SELECT * FROM dbo.PortalFormularios');
+    const portales = r.recordset.map(p => ({
+      ...p,
+      formularioIds: pf.recordset.filter(f => f.PortalId === p.PortalId).map(f => f.FormularioId),
+    }));
+    res.json(portales);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/portales', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const { nombre, slug, descripcion, formularioIds } = req.body;
+    if (!nombre || !slug) return res.status(400).json({ error: 'nombre y slug requeridos' });
+    const cleanSlug = slug.toLowerCase().replace(/[^a-z0-9-]/g, '');
+    const r = await pool.request()
+      .input('n', sql.NVarChar(200), nombre)
+      .input('s', sql.NVarChar(100), cleanSlug)
+      .input('d', sql.NVarChar(500), descripcion || null)
+      .query('INSERT INTO dbo.Portales(Nombre,Slug,Descripcion) OUTPUT INSERTED.PortalId VALUES(@n,@s,@d)');
+    const portalId = r.recordset[0].PortalId;
+    for (const fid of (formularioIds || [])) {
+      await pool.request()
+        .input('pid', sql.Int, portalId)
+        .input('fid', sql.Int, fid)
+        .query('INSERT INTO dbo.PortalFormularios(PortalId,FormularioId) VALUES(@pid,@fid)');
+    }
+    res.json({ PortalId: portalId });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/portales/:id', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const id = Number(req.params.id);
+    const { nombre, slug, descripcion, activo, formularioIds } = req.body;
+    const cleanSlug = slug ? slug.toLowerCase().replace(/[^a-z0-9-]/g, '') : undefined;
+    const rq = pool.request().input('id', sql.Int, id);
+    const sets = [];
+    if (nombre !== undefined) { rq.input('n', sql.NVarChar(200), nombre); sets.push('Nombre=@n'); }
+    if (cleanSlug !== undefined) { rq.input('s', sql.NVarChar(100), cleanSlug); sets.push('Slug=@s'); }
+    if (descripcion !== undefined) { rq.input('d', sql.NVarChar(500), descripcion || null); sets.push('Descripcion=@d'); }
+    if (activo !== undefined) { rq.input('a', sql.Bit, activo); sets.push('Activo=@a'); }
+    if (sets.length) await rq.query(`UPDATE dbo.Portales SET ${sets.join(',')} WHERE PortalId=@id`);
+    if (formularioIds !== undefined) {
+      await pool.request().input('id', sql.Int, id).query('DELETE FROM dbo.PortalFormularios WHERE PortalId=@id');
+      for (const fid of (formularioIds || [])) {
+        await pool.request()
+          .input('pid', sql.Int, id)
+          .input('fid', sql.Int, fid)
+          .query('INSERT INTO dbo.PortalFormularios(PortalId,FormularioId) VALUES(@pid,@fid)');
+      }
+    }
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/portales/:id', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const id = Number(req.params.id);
+    await pool.request().input('id', sql.Int, id).query('DELETE FROM dbo.PortalFormularios WHERE PortalId=@id');
+    await pool.request().input('id', sql.Int, id).query('DELETE FROM dbo.Portales WHERE PortalId=@id');
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/public/portal/:slug', async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const slug = req.params.slug;
+    const p = await pool.request().input('s', sql.NVarChar(100), slug)
+      .query('SELECT * FROM dbo.Portales WHERE Slug=@s AND Activo=1');
+    if (!p.recordset[0]) return res.status(404).json({ error: 'Portal no encontrado' });
+    const portal = p.recordset[0];
+    const f = await pool.request().input('pid', sql.Int, portal.PortalId)
+      .query(`SELECT f.FormularioId, f.Nombre, f.Descripcion, f.Slug
+              FROM dbo.Formularios f
+              INNER JOIN dbo.PortalFormularios pf ON pf.FormularioId=f.FormularioId
+              WHERE pf.PortalId=@pid AND f.Activo=1
+              ORDER BY f.Nombre`);
+    res.json({ ...portal, formularios: f.recordset });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
 
 app.post('/api/public/solicitud-vehiculo', async (req, res) => {
   try {
