@@ -6081,6 +6081,201 @@ app.get('/api/seguimiento-opt/:matricula/evaluaciones', autenticar, async (req, 
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// GET /api/seguimiento-opt/alertas — análisis de riesgo por alumno
+app.get('/api/seguimiento-opt-alertas', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+
+    // 1. Get all OPT portals and their calendar rules
+    const portalesRes = await pool.request().query(`
+      SELECT p.PortalId, p.Nombre FROM dbo.Portales p WHERE p.Activo=1`);
+    const calRes = await pool.request().query(`
+      SELECT c.PortalId, c.FormularioId, c.SemanaInicio, c.DiasActiva, c.Perfil
+      FROM dbo.PortalCalendario c`);
+    const calPortalIds = [...new Set(calRes.recordset.map(c => c.PortalId))];
+
+    // 2. Get all students in OPT
+    const alumnosRes = await pool.request().query(`
+      SELECT sPerfil AS Matricula, sNombreCompleto AS Nombre,
+             sNumeroGeneracion AS Generacion, sCasaAsignada AS Perfil,
+             dFechaEgresoUDATReal AS FechaEgreso, sEstatus AS Estatus,
+             CASE iIdEmpresa WHEN 1 THEN 'ALA' WHEN 10 THEN 'LARMEX' ELSE 'Otro' END AS Empresa
+      FROM dbo.OperacionesUDAT
+      WHERE dFechaEgresoUDATReal IS NOT NULL AND dFechaEgresoUDATReal > '1901-01-01'
+        AND (sEstatus IS NULL OR sEstatus NOT LIKE '%Baja%')
+      ORDER BY sNombreCompleto`);
+
+    // 3. Get all alumno-type questions
+    const alumnoQRes = await pool.request().query(`
+      SELECT p.PreguntaId, s.FormularioId
+      FROM dbo.FormPreguntas p JOIN dbo.FormSecciones s ON s.SeccionId=p.SeccionId
+      WHERE p.TipoRespuesta='alumno'`);
+    const preguntaIds = alumnoQRes.recordset.map(q => q.PreguntaId);
+    if (!preguntaIds.length) return res.json([]);
+
+    // 4. Get ALL responses that reference an alumno, with their values
+    const allRespRes = await pool.request().query(`
+      SELECT r.RespuestaId, r.FormularioId, r.FechaEnvio, r.OperadorNombre,
+             rv2.Valor AS AlumnoValor
+      FROM dbo.FormRespuestaValores rv2
+      JOIN dbo.FormRespuestas r ON r.RespuestaId=rv2.RespuestaId
+      WHERE rv2.PreguntaId IN (${preguntaIds.join(',')})
+        AND rv2.Valor IS NOT NULL AND rv2.Valor LIKE '%"matricula"%'`);
+
+    // Build map: matricula -> [RespuestaId]
+    const respPorAlumno = {};
+    for (const r of allRespRes.recordset) {
+      try {
+        const parsed = JSON.parse(r.AlumnoValor);
+        const mat = parsed.matricula;
+        if (!mat) continue;
+        if (!respPorAlumno[mat]) respPorAlumno[mat] = [];
+        respPorAlumno[mat].push(r.RespuestaId);
+      } catch {}
+    }
+
+    // 5. Get all values for those responses
+    const allRespIds = [...new Set(Object.values(respPorAlumno).flat())];
+    let valoresPorResp = {};
+    if (allRespIds.length > 0) {
+      const batchSize = 500;
+      for (let i = 0; i < allRespIds.length; i += batchSize) {
+        const batch = allRespIds.slice(i, i + batchSize);
+        const vRes = await pool.request().query(`
+          SELECT rv.RespuestaId, rv.Valor, p.Texto, p.TipoRespuesta
+          FROM dbo.FormRespuestaValores rv
+          JOIN dbo.FormPreguntas p ON p.PreguntaId=rv.PreguntaId
+          WHERE rv.RespuestaId IN (${batch.join(',')})`);
+        for (const v of vRes.recordset) {
+          if (!valoresPorResp[v.RespuestaId]) valoresPorResp[v.RespuestaId] = [];
+          valoresPorResp[v.RespuestaId].push(v);
+        }
+      }
+    }
+
+    // 6. Analyze each student
+    const now = new Date();
+    const alertas = [];
+
+    for (const al of alumnosRes.recordset) {
+      const mat = al.Matricula;
+      const respIds = respPorAlumno[mat] || [];
+      const flags = [];
+      let riesgo = 0; // 0-100
+
+      // a) Survey completion rate
+      const egreso = new Date(al.FechaEgreso);
+      const diffDays = Math.floor((now - egreso) / 86400000);
+      const semanaActual = Math.max(1, Math.floor(diffDays / 7) + 1);
+      const reglas = calRes.recordset.filter(r =>
+        (!r.Perfil || r.Perfil === al.Perfil) && r.SemanaInicio <= semanaActual
+      );
+      const vencidas = reglas.filter(r => (r.SemanaInicio + Math.ceil(r.DiasActiva / 7)) <= semanaActual).length;
+      const totalAplicables = reglas.length;
+
+      // Check completion: count how many forms this student responded to in calendar portals
+      const formRespondidos = new Set();
+      for (const rid of respIds) {
+        const r = allRespRes.recordset.find(x => x.RespuestaId === rid);
+        if (r) formRespondidos.add(r.FormularioId);
+      }
+      const completadas = reglas.filter(r => formRespondidos.has(r.FormularioId)).length;
+      const sinResponder = totalAplicables - completadas;
+
+      if (sinResponder > 0 && totalAplicables > 0) {
+        const pctSinResp = sinResponder / totalAplicables;
+        if (pctSinResp >= 0.5) {
+          flags.push({ tipo: 'encuestas', nivel: 'alto', mensaje: `${sinResponder} de ${totalAplicables} encuestas sin responder (${Math.round(pctSinResp * 100)}%)` });
+          riesgo += 30;
+        } else if (pctSinResp >= 0.25) {
+          flags.push({ tipo: 'encuestas', nivel: 'medio', mensaje: `${sinResponder} de ${totalAplicables} encuestas sin responder` });
+          riesgo += 15;
+        }
+      }
+
+      // b) Analyze actual response content
+      let totalSiNoNa = 0, totalNo = 0, totalNa = 0;
+      let negativePhrases = 0;
+      const negativeKeywords = ['mal', 'no me', 'difícil', 'dificil', 'problema', 'problemas', 'incómodo', 'incomodo', 'triste', 'solo', 'sola', 'miedo', 'preocup', 'estres', 'estrés', 'cansad', 'frustrad', 'insegur', 'confus', 'ayuda', 'apoyo'];
+
+      for (const rid of respIds) {
+        const valores = valoresPorResp[rid] || [];
+        for (const v of valores) {
+          if (v.TipoRespuesta === 'alumno' || v.TipoRespuesta === 'operador_tutor') continue;
+
+          const val = (v.Valor || '').trim().toLowerCase();
+
+          if (v.TipoRespuesta === 'si_no_na' || v.TipoRespuesta === 'si_no') {
+            totalSiNoNa++;
+            if (val === 'no') totalNo++;
+            if (val === 'na' || val === 'n/a') totalNa++;
+          }
+
+          if (v.TipoRespuesta === 'texto' || v.TipoRespuesta === 'textarea') {
+            for (const kw of negativeKeywords) {
+              if (val.includes(kw)) { negativePhrases++; break; }
+            }
+          }
+
+          if (v.TipoRespuesta === 'numero' || v.TipoRespuesta === 'escala') {
+            const num = parseFloat(val);
+            if (!isNaN(num) && num <= 3) riesgo += 2;
+          }
+        }
+      }
+
+      if (totalSiNoNa > 0) {
+        const pctNo = totalNo / totalSiNoNa;
+        if (pctNo >= 0.4) {
+          flags.push({ tipo: 'respuestas', nivel: 'alto', mensaje: `${Math.round(pctNo * 100)}% de respuestas son "No" (${totalNo}/${totalSiNoNa})` });
+          riesgo += 30;
+        } else if (pctNo >= 0.2) {
+          flags.push({ tipo: 'respuestas', nivel: 'medio', mensaje: `${Math.round(pctNo * 100)}% de respuestas son "No" (${totalNo}/${totalSiNoNa})` });
+          riesgo += 15;
+        }
+      }
+
+      if (negativePhrases >= 3) {
+        flags.push({ tipo: 'contenido', nivel: 'alto', mensaje: `${negativePhrases} respuestas con expresiones de dificultad o malestar` });
+        riesgo += 20;
+      } else if (negativePhrases >= 1) {
+        flags.push({ tipo: 'contenido', nivel: 'medio', mensaje: `${negativePhrases} respuesta(s) con expresiones de dificultad` });
+        riesgo += 10;
+      }
+
+      // c) No evaluaciones at all
+      if (respIds.length === 0 && semanaActual >= 3) {
+        flags.push({ tipo: 'sin_datos', nivel: 'alto', mensaje: 'Sin ninguna evaluación registrada' });
+        riesgo += 25;
+      }
+
+      riesgo = Math.min(100, riesgo);
+
+      if (flags.length > 0 || riesgo > 0) {
+        const nivelRiesgo = riesgo >= 50 ? 'alto' : riesgo >= 25 ? 'medio' : 'bajo';
+        alertas.push({
+          matricula: mat,
+          nombre: al.Nombre,
+          generacion: al.Generacion,
+          perfil: al.Perfil,
+          empresa: al.Empresa,
+          etapa: al.Estatus || '',
+          semanaActual,
+          riesgo,
+          nivelRiesgo,
+          flags,
+          totalEvaluaciones: respIds.length,
+          encuestasCompletadas: completadas,
+          encuestasTotales: totalAplicables,
+        });
+      }
+    }
+
+    alertas.sort((a, b) => b.riesgo - a.riesgo);
+    res.json(alertas);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.post('/api/public/solicitud-vehiculo', async (req, res) => {
   try {
     if (!ensurePool(res)) return;
