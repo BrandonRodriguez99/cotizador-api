@@ -5726,6 +5726,19 @@ app.get('/api/public/portal/:slug', async (req, res) => {
 });
 
 // GET /api/public/alumno-egreso — fecha de egreso de un alumno por matrícula
+// TEMPORAL: buscar egresos recientes para pruebas
+app.get('/api/public/egresos-recientes', async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const r = await pool.request().query(`
+      SELECT TOP 20 sPerfil, dFechaEgresoUDATReal, sNumeroGeneracion
+      FROM dbo.OperacionesUDAT
+      WHERE dFechaEgresoUDATReal IS NOT NULL AND dFechaEgresoUDATReal > '2024-01-01'
+      ORDER BY dFechaEgresoUDATReal DESC`);
+    res.json(r.recordset);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.get('/api/public/alumno-egreso', async (req, res) => {
   try {
     if (!ensurePool(res)) return;
