@@ -5837,11 +5837,11 @@ app.get('/api/public/portal/:slug/alumno', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// DEBUG: distinct sEtapa values (temporary)
+// DEBUG: check columns (temporary)
 app.get('/api/debug/etapas', async (req, res) => {
   try {
     if (!ensurePool(res)) return;
-    const r = await pool.request().query(`SELECT DISTINCT sEtapa, COUNT(*) AS cnt FROM dbo.OperacionesUDAT WHERE dFechaEgresoUDATReal IS NOT NULL AND dFechaEgresoUDATReal > '1901-01-01' AND (sEstatus IS NULL OR sEstatus NOT LIKE '%Baja%') GROUP BY sEtapa ORDER BY cnt DESC`);
+    const r = await pool.request().query(`SELECT DISTINCT sEstatus, COUNT(*) AS cnt FROM dbo.OperacionesUDAT WHERE dFechaEgresoUDATReal IS NOT NULL AND dFechaEgresoUDATReal > '1901-01-01' AND (sEstatus IS NULL OR sEstatus NOT LIKE '%Baja%') GROUP BY sEstatus ORDER BY cnt DESC`);
     res.json(r.recordset);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
