@@ -7428,7 +7428,8 @@ app.get('/api/formularios/respuestas/todas', autenticar, async (req, res) => {
         .query(`SELECT rv.PreguntaId, rv.Valor, p.Texto, p.TipoRespuesta
                 FROM dbo.FormRespuestaValores rv
                 JOIN dbo.FormPreguntas p ON p.PreguntaId=rv.PreguntaId
-                WHERE rv.RespuestaId=@rid ORDER BY p.Orden`);
+                JOIN dbo.FormSecciones s ON s.SeccionId=p.SeccionId
+                WHERE rv.RespuestaId=@rid ORDER BY s.Orden, p.Orden`);
       resp.valores = vRes.recordset;
     }
     res.json(rRes.recordset);
@@ -7453,7 +7454,8 @@ app.get('/api/formularios/:id/respuestas', autenticar, async (req, res) => {
         .query(`SELECT rv.PreguntaId, rv.Valor, p.Texto, p.TipoRespuesta
                 FROM dbo.FormRespuestaValores rv
                 JOIN dbo.FormPreguntas p ON p.PreguntaId=rv.PreguntaId
-                WHERE rv.RespuestaId=@rid ORDER BY p.Orden`);
+                JOIN dbo.FormSecciones s ON s.SeccionId=p.SeccionId
+                WHERE rv.RespuestaId=@rid ORDER BY s.Orden, p.Orden`);
       resp.valores = vRes.recordset;
     }
 
