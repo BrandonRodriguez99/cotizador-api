@@ -6081,20 +6081,17 @@ app.get('/api/seguimiento-opt/:matricula/evaluaciones', autenticar, async (req, 
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// GET /api/seguimiento-opt/alertas — análisis de riesgo por alumno
+// GET /api/seguimiento-opt-alertas — análisis de riesgo por alumno basado en preguntas y opciones reales
 app.get('/api/seguimiento-opt-alertas', autenticar, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
 
-    // 1. Get all OPT portals and their calendar rules
-    const portalesRes = await pool.request().query(`
-      SELECT p.PortalId, p.Nombre FROM dbo.Portales p WHERE p.Activo=1`);
+    // 1. Calendar rules
     const calRes = await pool.request().query(`
       SELECT c.PortalId, c.FormularioId, c.SemanaInicio, c.DiasActiva, c.Perfil
       FROM dbo.PortalCalendario c`);
-    const calPortalIds = [...new Set(calRes.recordset.map(c => c.PortalId))];
 
-    // 2. Get all students in OPT
+    // 2. Students in OPT only
     const alumnosRes = await pool.request().query(`
       SELECT sPerfil AS Matricula, sNombreCompleto AS Nombre,
              sNumeroGeneracion AS Generacion, sCasaAsignada AS Perfil,
@@ -6105,46 +6102,60 @@ app.get('/api/seguimiento-opt-alertas', autenticar, async (req, res) => {
         AND sEstatus LIKE '%OPT%'
       ORDER BY sNombreCompleto`);
 
-    // 3. Get all alumno-type questions
-    const alumnoQRes = await pool.request().query(`
-      SELECT p.PreguntaId, s.FormularioId
-      FROM dbo.FormPreguntas p JOIN dbo.FormSecciones s ON s.SeccionId=p.SeccionId
-      WHERE p.TipoRespuesta='alumno'`);
-    const preguntaIds = alumnoQRes.recordset.map(q => q.PreguntaId);
-    if (!preguntaIds.length) return res.json([]);
+    // 3. Load ALL questions with their options (to know the option order/severity)
+    const pregRes = await pool.request().query(`
+      SELECT p.PreguntaId, p.Texto, p.TipoRespuesta, s.FormularioId
+      FROM dbo.FormPreguntas p
+      JOIN dbo.FormSecciones s ON s.SeccionId=p.SeccionId`);
+    const opcionesRes = await pool.request().query(`
+      SELECT o.PreguntaId, o.Texto, o.Orden
+      FROM dbo.FormOpciones o ORDER BY o.PreguntaId, o.Orden`);
 
-    // 4. Get ALL responses that reference an alumno, with their values
+    // Build question map: PreguntaId -> { texto, tipo, opciones: [{texto, orden}], totalOpciones }
+    const pregMap = {};
+    for (const p of pregRes.recordset) {
+      pregMap[p.PreguntaId] = { texto: p.Texto, tipo: p.TipoRespuesta, formId: p.FormularioId, opciones: [], totalOpciones: 0 };
+    }
+    for (const o of opcionesRes.recordset) {
+      if (pregMap[o.PreguntaId]) {
+        pregMap[o.PreguntaId].opciones.push({ texto: o.Texto, orden: o.Orden });
+        pregMap[o.PreguntaId].totalOpciones++;
+      }
+    }
+
+    // 4. Find alumno-type questions
+    const alumnoPregIds = pregRes.recordset.filter(p => p.TipoRespuesta === 'alumno').map(p => p.PreguntaId);
+    if (!alumnoPregIds.length) return res.json([]);
+
+    // 5. Get ALL responses referencing an alumno
     const allRespRes = await pool.request().query(`
-      SELECT r.RespuestaId, r.FormularioId, r.FechaEnvio, r.OperadorNombre,
+      SELECT r.RespuestaId, r.FormularioId, r.FechaEnvio,
              rv2.Valor AS AlumnoValor
       FROM dbo.FormRespuestaValores rv2
       JOIN dbo.FormRespuestas r ON r.RespuestaId=rv2.RespuestaId
-      WHERE rv2.PreguntaId IN (${preguntaIds.join(',')})
+      WHERE rv2.PreguntaId IN (${alumnoPregIds.join(',')})
         AND rv2.Valor IS NOT NULL AND rv2.Valor LIKE '%"matricula"%'`);
 
-    // Build map: matricula -> [RespuestaId]
     const respPorAlumno = {};
     for (const r of allRespRes.recordset) {
       try {
-        const parsed = JSON.parse(r.AlumnoValor);
-        const mat = parsed.matricula;
+        const mat = JSON.parse(r.AlumnoValor).matricula;
         if (!mat) continue;
         if (!respPorAlumno[mat]) respPorAlumno[mat] = [];
         respPorAlumno[mat].push(r.RespuestaId);
       } catch {}
     }
 
-    // 5. Get all values for those responses
+    // 6. Get all answer values WITH PreguntaId so we can look up the question's options
     const allRespIds = [...new Set(Object.values(respPorAlumno).flat())];
-    let valoresPorResp = {};
+    const valoresPorResp = {};
     if (allRespIds.length > 0) {
       const batchSize = 500;
       for (let i = 0; i < allRespIds.length; i += batchSize) {
         const batch = allRespIds.slice(i, i + batchSize);
         const vRes = await pool.request().query(`
-          SELECT rv.RespuestaId, rv.Valor, p.Texto, p.TipoRespuesta
+          SELECT rv.RespuestaId, rv.PreguntaId, rv.Valor
           FROM dbo.FormRespuestaValores rv
-          JOIN dbo.FormPreguntas p ON p.PreguntaId=rv.PreguntaId
           WHERE rv.RespuestaId IN (${batch.join(',')})`);
         for (const v of vRes.recordset) {
           if (!valoresPorResp[v.RespuestaId]) valoresPorResp[v.RespuestaId] = [];
@@ -6153,27 +6164,24 @@ app.get('/api/seguimiento-opt-alertas', autenticar, async (req, res) => {
       }
     }
 
-    // 6. Analyze each student
+    // 7. Analyze each student
     const now = new Date();
+    const negativeKeywords = ['mal', 'no me', 'difícil', 'dificil', 'problema', 'problemas', 'incómodo', 'incomodo', 'triste', 'miedo', 'preocup', 'estres', 'estrés', 'cansad', 'frustrad', 'insegur', 'confus', 'no he podido', 'afectando'];
     const alertas = [];
 
     for (const al of alumnosRes.recordset) {
       const mat = al.Matricula;
       const respIds = respPorAlumno[mat] || [];
       const flags = [];
-      let riesgo = 0; // 0-100
+      let riesgo = 0;
 
-      // a) Survey completion rate
+      // a) Survey completion
       const egreso = new Date(al.FechaEgreso);
       const diffDays = Math.floor((now - egreso) / 86400000);
       const semanaActual = Math.max(1, Math.floor(diffDays / 7) + 1);
-      const reglas = calRes.recordset.filter(r =>
-        (!r.Perfil || r.Perfil === al.Perfil) && r.SemanaInicio <= semanaActual
-      );
-      const vencidas = reglas.filter(r => (r.SemanaInicio + Math.ceil(r.DiasActiva / 7)) <= semanaActual).length;
+      const reglas = calRes.recordset.filter(r => (!r.Perfil || r.Perfil === al.Perfil) && r.SemanaInicio <= semanaActual);
       const totalAplicables = reglas.length;
 
-      // Check completion: count how many forms this student responded to in calendar portals
       const formRespondidos = new Set();
       for (const rid of respIds) {
         const r = allRespRes.recordset.find(x => x.RespuestaId === rid);
@@ -6183,64 +6191,103 @@ app.get('/api/seguimiento-opt-alertas', autenticar, async (req, res) => {
       const sinResponder = totalAplicables - completadas;
 
       if (sinResponder > 0 && totalAplicables > 0) {
-        const pctSinResp = sinResponder / totalAplicables;
-        if (pctSinResp >= 0.5) {
-          flags.push({ tipo: 'encuestas', nivel: 'alto', mensaje: `${sinResponder} de ${totalAplicables} encuestas sin responder (${Math.round(pctSinResp * 100)}%)` });
+        const pct = sinResponder / totalAplicables;
+        if (pct >= 0.5) {
+          flags.push({ tipo: 'encuestas', nivel: 'alto', mensaje: `${sinResponder} de ${totalAplicables} encuestas sin responder (${Math.round(pct * 100)}%)` });
           riesgo += 30;
-        } else if (pctSinResp >= 0.25) {
+        } else if (pct >= 0.25) {
           flags.push({ tipo: 'encuestas', nivel: 'medio', mensaje: `${sinResponder} de ${totalAplicables} encuestas sin responder` });
           riesgo += 15;
         }
       }
 
-      // b) Analyze actual response content
-      let totalSiNoNa = 0, totalNo = 0, totalNa = 0;
-      let negativePhrases = 0;
-      const negativeKeywords = ['mal', 'no me', 'difícil', 'dificil', 'problema', 'problemas', 'incómodo', 'incomodo', 'triste', 'solo', 'sola', 'miedo', 'preocup', 'estres', 'estrés', 'cansad', 'frustrad', 'insegur', 'confus', 'ayuda', 'apoyo'];
-
+      // b) Analyze each answer using real question options
+      const alertDetails = [];
       for (const rid of respIds) {
         const valores = valoresPorResp[rid] || [];
         for (const v of valores) {
-          if (v.TipoRespuesta === 'alumno' || v.TipoRespuesta === 'operador_tutor') continue;
+          const preg = pregMap[v.PreguntaId];
+          if (!preg) continue;
+          if (preg.tipo === 'alumno' || preg.tipo === 'operador_tutor') continue;
+          const val = (v.Valor || '').trim();
+          const valLower = val.toLowerCase();
 
-          const val = (v.Valor || '').trim().toLowerCase();
+          // LISTA DESPLEGABLE / SELECCION: use option position to determine severity
+          if ((preg.tipo === 'seleccion' || preg.tipo === 'lista') && preg.totalOpciones >= 2) {
+            const selectedOption = preg.opciones.find(o => o.texto.trim().toLowerCase() === valLower);
+            if (selectedOption) {
+              const position = selectedOption.orden; // 0-based
+              const total = preg.totalOpciones;
+              const severity = position / (total - 1); // 0 = best, 1 = worst
 
-          if (v.TipoRespuesta === 'si_no_na' || v.TipoRespuesta === 'si_no') {
-            totalSiNoNa++;
-            if (val === 'no') totalNo++;
-            if (val === 'na' || val === 'n/a') totalNa++;
-          }
-
-          if (v.TipoRespuesta === 'texto' || v.TipoRespuesta === 'textarea') {
-            for (const kw of negativeKeywords) {
-              if (val.includes(kw)) { negativePhrases++; break; }
+              if (severity >= 0.75) {
+                alertDetails.push({ pregunta: preg.texto, respuesta: val, severity: 'alto' });
+                riesgo += 8;
+              } else if (severity >= 0.5) {
+                alertDetails.push({ pregunta: preg.texto, respuesta: val, severity: 'medio' });
+                riesgo += 4;
+              }
             }
           }
 
-          if (v.TipoRespuesta === 'numero' || v.TipoRespuesta === 'escala') {
+          // SI/NO and SI/NO/NA
+          if (preg.tipo === 'si_no_na' || preg.tipo === 'si_no') {
+            if (valLower === 'no') {
+              alertDetails.push({ pregunta: preg.texto, respuesta: val, severity: 'medio' });
+              riesgo += 5;
+            }
+          }
+
+          // ESCALA NUMÉRICA: value vs max option
+          if (preg.tipo === 'escala' || preg.tipo === 'numero') {
             const num = parseFloat(val);
-            if (!isNaN(num) && num <= 3) riesgo += 2;
+            if (!isNaN(num) && preg.totalOpciones >= 2) {
+              const maxVal = Math.max(...preg.opciones.map(o => parseFloat(o.texto) || 0));
+              if (maxVal > 0) {
+                const ratio = num / maxVal;
+                if (ratio <= 0.3) {
+                  alertDetails.push({ pregunta: preg.texto, respuesta: `${num}/${maxVal}`, severity: 'alto' });
+                  riesgo += 10;
+                } else if (ratio <= 0.5) {
+                  alertDetails.push({ pregunta: preg.texto, respuesta: `${num}/${maxVal}`, severity: 'medio' });
+                  riesgo += 5;
+                }
+              }
+            }
+          }
+
+          // TEXTO LIBRE: keyword analysis
+          if (preg.tipo === 'texto' || preg.tipo === 'textarea') {
+            if (valLower.length > 3) {
+              for (const kw of negativeKeywords) {
+                if (valLower.includes(kw)) {
+                  alertDetails.push({ pregunta: preg.texto, respuesta: val.substring(0, 100), severity: 'medio' });
+                  riesgo += 4;
+                  break;
+                }
+              }
+            }
           }
         }
       }
 
-      if (totalSiNoNa > 0) {
-        const pctNo = totalNo / totalSiNoNa;
-        if (pctNo >= 0.4) {
-          flags.push({ tipo: 'respuestas', nivel: 'alto', mensaje: `${Math.round(pctNo * 100)}% de respuestas son "No" (${totalNo}/${totalSiNoNa})` });
-          riesgo += 30;
-        } else if (pctNo >= 0.2) {
-          flags.push({ tipo: 'respuestas', nivel: 'medio', mensaje: `${Math.round(pctNo * 100)}% de respuestas son "No" (${totalNo}/${totalSiNoNa})` });
-          riesgo += 15;
+      // Group alert details into flags
+      const altos = alertDetails.filter(d => d.severity === 'alto');
+      const medios = alertDetails.filter(d => d.severity === 'medio');
+
+      if (altos.length > 0) {
+        for (const d of altos) {
+          flags.push({ tipo: 'respuesta', nivel: 'alto', mensaje: `"${d.pregunta}" → ${d.respuesta}` });
         }
       }
-
-      if (negativePhrases >= 3) {
-        flags.push({ tipo: 'contenido', nivel: 'alto', mensaje: `${negativePhrases} respuestas con expresiones de dificultad o malestar` });
-        riesgo += 20;
-      } else if (negativePhrases >= 1) {
-        flags.push({ tipo: 'contenido', nivel: 'medio', mensaje: `${negativePhrases} respuesta(s) con expresiones de dificultad` });
-        riesgo += 10;
+      if (medios.length > 0) {
+        if (medios.length <= 3) {
+          for (const d of medios) {
+            flags.push({ tipo: 'respuesta', nivel: 'medio', mensaje: `"${d.pregunta}" → ${d.respuesta}` });
+          }
+        } else {
+          flags.push({ tipo: 'respuesta', nivel: 'medio', mensaje: `${medios.length} respuestas con indicadores de atención` });
+        }
       }
 
       // c) No evaluaciones at all
@@ -6254,19 +6301,11 @@ app.get('/api/seguimiento-opt-alertas', autenticar, async (req, res) => {
       if (flags.length > 0 || riesgo > 0) {
         const nivelRiesgo = riesgo >= 50 ? 'alto' : riesgo >= 25 ? 'medio' : 'bajo';
         alertas.push({
-          matricula: mat,
-          nombre: al.Nombre,
-          generacion: al.Generacion,
-          perfil: al.Perfil,
-          empresa: al.Empresa,
-          etapa: al.Estatus || '',
-          semanaActual,
-          riesgo,
-          nivelRiesgo,
-          flags,
+          matricula: mat, nombre: al.Nombre, generacion: al.Generacion,
+          perfil: al.Perfil, empresa: al.Empresa, etapa: al.Estatus || '',
+          semanaActual, riesgo, nivelRiesgo, flags,
           totalEvaluaciones: respIds.length,
-          encuestasCompletadas: completadas,
-          encuestasTotales: totalAplicables,
+          encuestasCompletadas: completadas, encuestasTotales: totalAplicables,
         });
       }
     }
