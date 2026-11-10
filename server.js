@@ -6212,20 +6212,36 @@ app.get('/api/seguimiento-opt-alertas', autenticar, async (req, res) => {
           const val = (v.Valor || '').trim();
           const valLower = val.toLowerCase();
 
-          // LISTA DESPLEGABLE / SELECCION: use option position to determine severity
+          // LISTA DESPLEGABLE / SELECCION: analyze based on question pattern
           if ((preg.tipo === 'seleccion' || preg.tipo === 'lista') && preg.totalOpciones >= 2) {
             const selectedOption = preg.opciones.find(o => o.texto.trim().toLowerCase() === valLower);
             if (selectedOption) {
               const position = selectedOption.orden; // 0-based
               const total = preg.totalOpciones;
-              const severity = position / (total - 1); // 0 = best, 1 = worst
+              const pregLower = preg.texto.toLowerCase();
+              const firstOptLower = (preg.opciones.find(o => o.orden === 0)?.texto || '').toLowerCase();
 
-              if (severity >= 0.75) {
+              // Pattern A: "¿dificultad/problema?" with Sí/No (2 opts) where Sí=bad
+              const isDifficultyQuestion = /dificult|problema|dificil/.test(pregLower);
+              if (total === 2 && isDifficultyQuestion && position === 0 && /^s[ií]/i.test(val)) {
                 alertDetails.push({ pregunta: preg.texto, respuesta: val, severity: 'alto' });
                 riesgo += 8;
-              } else if (severity >= 0.5) {
-                alertDetails.push({ pregunta: preg.texto, respuesta: val, severity: 'medio' });
-                riesgo += 4;
+              }
+              // Pattern B: first option = "no problems" (e.g. "No he tenido dificultades"), rest = specific issues
+              else if (total >= 4 && /no he tenido|sin dificultad|ninguna/.test(firstOptLower) && position > 0) {
+                alertDetails.push({ pregunta: preg.texto, respuesta: val, severity: 'alto' });
+                riesgo += 10;
+              }
+              // Pattern C: linear scale (Excelente→Muy mal, Muy bien→Muy mal, etc.)
+              else {
+                const severity = position / (total - 1); // 0=best, 1=worst
+                if (severity >= 0.75) {
+                  alertDetails.push({ pregunta: preg.texto, respuesta: val, severity: 'alto' });
+                  riesgo += 8;
+                } else if (severity >= 0.5) {
+                  alertDetails.push({ pregunta: preg.texto, respuesta: val, severity: 'medio' });
+                  riesgo += 4;
+                }
               }
             }
           }
