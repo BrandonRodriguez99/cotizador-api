@@ -5872,7 +5872,8 @@ app.get('/api/seguimiento-opt', autenticar, async (req, res) => {
              sNumeroGeneracion AS Generacion,
              sCasaAsignada AS Perfil,
              dFechaEgresoUDATReal AS FechaEgreso,
-             sEstatus AS Estatus
+             sEstatus AS Estatus,
+             sEtapa AS Etapa
       FROM dbo.OperacionesUDAT
       WHERE dFechaEgresoUDATReal IS NOT NULL
         AND dFechaEgresoUDATReal > '1901-01-01'
@@ -5987,6 +5988,7 @@ app.get('/api/seguimiento-opt', autenticar, async (req, res) => {
         generacion: al.Generacion,
         perfil: al.Perfil,
         fechaEgreso: al.FechaEgreso,
+        etapa: al.Etapa || '',
         semanaActual,
         totalEncuestas,
         completadas,
