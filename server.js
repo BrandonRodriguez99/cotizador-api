@@ -6102,7 +6102,7 @@ app.get('/api/seguimiento-opt-alertas', autenticar, async (req, res) => {
              CASE iIdEmpresa WHEN 1 THEN 'ALA' WHEN 10 THEN 'LARMEX' ELSE 'Otro' END AS Empresa
       FROM dbo.OperacionesUDAT
       WHERE dFechaEgresoUDATReal IS NOT NULL AND dFechaEgresoUDATReal > '1901-01-01'
-        AND (sEstatus IS NULL OR sEstatus NOT LIKE '%Baja%')
+        AND sEstatus LIKE '%OPT%'
       ORDER BY sNombreCompleto`);
 
     // 3. Get all alumno-type questions
