@@ -6228,7 +6228,7 @@ app.get('/api/seguimiento-opt-alertas', autenticar, async (req, res) => {
                 riesgo += 8;
               }
               // Pattern B: first option = "no problems" (e.g. "No he tenido dificultades"), rest = specific issues
-              else if (total >= 4 && /no he tenido|sin dificultad|ninguna/.test(firstOptLower) && position > 0) {
+              else if (total >= 3 && /no he tenido|no tuve|sin dificultad|ninguna/.test(firstOptLower) && position > 0) {
                 alertDetails.push({ pregunta: preg.texto, respuesta: val, severity: 'alto' });
                 riesgo += 10;
               }
