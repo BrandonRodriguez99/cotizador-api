@@ -7150,7 +7150,10 @@ app.get('/api/formularios/publico/lista', async (req, res) => {
   try {
     if (!ensurePool(res)) return;
     const r = await pool.request()
-      .query(`SELECT FormularioId, Nombre, Descripcion FROM dbo.Formularios WHERE Activo=1 ORDER BY Nombre`);
+      .query(`SELECT FormularioId, Nombre, Descripcion FROM dbo.Formularios
+              WHERE Activo=1
+                AND FormularioId NOT IN (SELECT FormularioId FROM dbo.PortalFormularios)
+              ORDER BY Nombre`);
     res.json(r.recordset.map(f => ({ ...f, Slug: String(f.FormularioId) })));
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
