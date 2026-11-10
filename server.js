@@ -6007,6 +6007,80 @@ app.get('/api/seguimiento-opt', autenticar, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// GET /api/seguimiento-opt/:matricula/evaluaciones — evaluaciones de encargados + respuestas propias
+app.get('/api/seguimiento-opt/:matricula/evaluaciones', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const matricula = req.params.matricula;
+
+    // Find all alumno-type questions across all forms
+    const alumnoQRes = await pool.request().query(`
+      SELECT p.PreguntaId, s.FormularioId
+      FROM dbo.FormPreguntas p
+      JOIN dbo.FormSecciones s ON s.SeccionId=p.SeccionId
+      WHERE p.TipoRespuesta='alumno'`);
+    const alumnoPreguntas = alumnoQRes.recordset;
+    if (!alumnoPreguntas.length) return res.json([]);
+
+    const preguntaIds = alumnoPreguntas.map(q => q.PreguntaId);
+
+    // Find all responses where the alumno field matches this matricula
+    const respRes = await pool.request().query(`
+      SELECT r.RespuestaId, r.FormularioId, r.FechaEnvio, r.OperadorNombre,
+             f.Nombre AS FormularioNombre
+      FROM dbo.FormRespuestaValores rv
+      JOIN dbo.FormRespuestas r ON r.RespuestaId=rv.RespuestaId
+      JOIN dbo.Formularios f ON f.FormularioId=r.FormularioId
+      WHERE rv.PreguntaId IN (${preguntaIds.join(',')})
+        AND rv.Valor LIKE '%"matricula":"${matricula.replace(/'/g, "''")}"%'
+      ORDER BY r.FechaEnvio DESC`);
+
+    // For each response, get all values
+    const evaluaciones = [];
+    for (const resp of respRes.recordset) {
+      const vRes = await pool.request().input('rid', sql.Int, resp.RespuestaId)
+        .query(`SELECT rv.Valor, p.Texto, p.TipoRespuesta
+                FROM dbo.FormRespuestaValores rv
+                JOIN dbo.FormPreguntas p ON p.PreguntaId=rv.PreguntaId
+                JOIN dbo.FormSecciones s ON s.SeccionId=p.SeccionId
+                WHERE rv.RespuestaId=@rid ORDER BY s.Orden, p.Orden`);
+
+      // Determine source: check if this form belongs to a calendar portal or not
+      const calCheck = await pool.request().input('fid', sql.Int, resp.FormularioId)
+        .query(`SELECT TOP 1 p.Nombre AS PortalNombre, 1 AS HasCal
+                FROM dbo.PortalCalendario c
+                JOIN dbo.Portales p ON p.PortalId=c.PortalId
+                WHERE c.FormularioId=@fid`);
+      const nocalCheck = await pool.request().input('fid', sql.Int, resp.FormularioId)
+        .query(`SELECT TOP 1 p.Nombre AS PortalNombre
+                FROM dbo.PortalFormularios pf
+                JOIN dbo.Portales p ON p.PortalId=pf.PortalId
+                WHERE pf.FormularioId=@fid
+                  AND NOT EXISTS (SELECT 1 FROM dbo.PortalCalendario c WHERE c.PortalId=p.PortalId)`);
+
+      const tipo = calCheck.recordset[0] ? 'alumno' : 'encargado';
+      const portal = calCheck.recordset[0]?.PortalNombre || nocalCheck.recordset[0]?.PortalNombre || '';
+
+      evaluaciones.push({
+        respuestaId: resp.RespuestaId,
+        formularioId: resp.FormularioId,
+        formularioNombre: resp.FormularioNombre,
+        fecha: resp.FechaEnvio,
+        operador: resp.OperadorNombre,
+        tipo,
+        portal,
+        valores: vRes.recordset.map(v => ({
+          pregunta: v.Texto,
+          tipo: v.TipoRespuesta,
+          valor: v.Valor,
+        })),
+      });
+    }
+
+    res.json(evaluaciones);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.post('/api/public/solicitud-vehiculo', async (req, res) => {
   try {
     if (!ensurePool(res)) return;
