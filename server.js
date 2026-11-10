@@ -1272,9 +1272,13 @@ sql
               FormularioId    INT NOT NULL,
               SemanaInicio    INT NOT NULL,
               DiasActiva      INT NOT NULL DEFAULT 7,
+              Perfil          NVARCHAR(200) NULL,
               Orden           INT NOT NULL DEFAULT 0
             );
           END
+
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.PortalCalendario') AND name='Perfil')
+            ALTER TABLE dbo.PortalCalendario ADD Perfil NVARCHAR(200) NULL;
 
           IF OBJECT_ID('dbo.FormPreguntas','U') IS NULL
           BEGIN
@@ -5646,8 +5650,9 @@ app.post('/api/portales', autenticar, async (req, res) => {
         .input('fid', sql.Int, c.formularioId)
         .input('si', sql.Int, c.semanaInicio)
         .input('da', sql.Int, c.diasActiva || 7)
+        .input('pf', sql.NVarChar(200), c.perfil || null)
         .input('o', sql.Int, ci)
-        .query('INSERT INTO dbo.PortalCalendario(PortalId,FormularioId,SemanaInicio,DiasActiva,Orden) VALUES(@pid,@fid,@si,@da,@o)');
+        .query('INSERT INTO dbo.PortalCalendario(PortalId,FormularioId,SemanaInicio,DiasActiva,Perfil,Orden) VALUES(@pid,@fid,@si,@da,@pf,@o)');
     }
     res.json({ PortalId: portalId });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -5684,8 +5689,9 @@ app.put('/api/portales/:id', autenticar, async (req, res) => {
           .input('fid', sql.Int, c.formularioId || c.FormularioId)
           .input('si', sql.Int, c.semanaInicio || c.SemanaInicio)
           .input('da', sql.Int, c.diasActiva || c.DiasActiva || 7)
+          .input('pf', sql.NVarChar(200), c.perfil || c.Perfil || null)
           .input('o', sql.Int, ci)
-          .query('INSERT INTO dbo.PortalCalendario(PortalId,FormularioId,SemanaInicio,DiasActiva,Orden) VALUES(@pid,@fid,@si,@da,@o)');
+          .query('INSERT INTO dbo.PortalCalendario(PortalId,FormularioId,SemanaInicio,DiasActiva,Perfil,Orden) VALUES(@pid,@fid,@si,@da,@pf,@o)');
       }
     }
     res.json({ ok: true });
@@ -5726,6 +5732,19 @@ app.get('/api/public/portal/:slug', async (req, res) => {
 });
 
 // GET /api/public/alumno-egreso — fecha de egreso de un alumno por matrícula
+// GET /api/public/perfiles-opt — perfiles distintos de sCasaAsignada
+app.get('/api/public/perfiles-opt', async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const r = await pool.request().query(`
+      SELECT DISTINCT sCasaAsignada
+      FROM dbo.OperacionesUDAT
+      WHERE sCasaAsignada IS NOT NULL AND sCasaAsignada <> ''
+      ORDER BY sCasaAsignada`);
+    res.json(r.recordset.map(x => x.sCasaAsignada));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.get('/api/public/alumno-egreso', async (req, res) => {
   try {
     if (!ensurePool(res)) return;
@@ -5733,7 +5752,7 @@ app.get('/api/public/alumno-egreso', async (req, res) => {
     if (!matricula) return res.status(400).json({ error: 'matricula requerida' });
     const r = await pool.request()
       .input('m', sql.NVarChar(100), matricula)
-      .query(`SELECT TOP 1 sPerfil, dFechaEgresoUDATReal, sNumeroGeneracion
+      .query(`SELECT TOP 1 sPerfil, dFechaEgresoUDATReal, sNumeroGeneracion, sCasaAsignada
               FROM dbo.OperacionesUDAT
               WHERE sPerfil = @m AND dFechaEgresoUDATReal IS NOT NULL
               ORDER BY dFechaEgresoUDATReal DESC`);
@@ -5744,6 +5763,7 @@ app.get('/api/public/alumno-egreso', async (req, res) => {
       matricula: row.sPerfil,
       fechaEgreso: row.dFechaEgresoUDATReal,
       generacion: row.sNumeroGeneracion,
+      perfil: row.sCasaAsignada || null,
     });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -5761,13 +5781,14 @@ app.get('/api/public/portal/:slug/alumno', async (req, res) => {
     if (!p.recordset[0]) return res.status(404).json({ error: 'Portal no encontrado' });
     const portal = p.recordset[0];
 
-    // Get fecha egreso
+    // Get fecha egreso + perfil
     const eg = await pool.request().input('m', sql.NVarChar(100), matricula)
-      .query(`SELECT TOP 1 dFechaEgresoUDATReal FROM dbo.OperacionesUDAT
+      .query(`SELECT TOP 1 dFechaEgresoUDATReal, sCasaAsignada FROM dbo.OperacionesUDAT
               WHERE sPerfil = @m AND dFechaEgresoUDATReal IS NOT NULL
               ORDER BY dFechaEgresoUDATReal DESC`);
     if (!eg.recordset[0]) return res.json({ ...portal, formularios: [], mensaje: 'Sin fecha de egreso registrada' });
     const fechaEgreso = new Date(eg.recordset[0].dFechaEgresoUDATReal);
+    const alumnoPerfil = (eg.recordset[0].sCasaAsignada || '').trim();
 
     // Get calendario rules
     const cal = await pool.request().input('pid', sql.Int, portal.PortalId)
@@ -5780,7 +5801,7 @@ app.get('/api/public/portal/:slug/alumno', async (req, res) => {
                 FROM dbo.Formularios f
                 INNER JOIN dbo.PortalFormularios pf ON pf.FormularioId=f.FormularioId
                 WHERE pf.PortalId=@pid ORDER BY f.Nombre`);
-      return res.json({ ...portal, formularios: f.recordset, fechaEgreso, semanaActual: null });
+      return res.json({ ...portal, formularios: f.recordset, fechaEgreso, semanaActual: null, perfil: alumnoPerfil });
     }
 
     // Calculate current week since egreso
@@ -5789,18 +5810,20 @@ app.get('/api/public/portal/:slug/alumno', async (req, res) => {
     const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
     const semanaActual = Math.floor(diffDays / 7) + 1;
 
-    // Filter forms by calendar rules
+    // Filter forms by calendar rules (time + perfil)
     const formIdsActivos = [];
     for (const rule of cal.recordset) {
       const diaInicioRegla = (rule.SemanaInicio - 1) * 7;
       const diaFinRegla = diaInicioRegla + rule.DiasActiva;
-      if (diffDays >= diaInicioRegla && diffDays < diaFinRegla) {
+      const timeOk = diffDays >= diaInicioRegla && diffDays < diaFinRegla;
+      const perfilOk = !rule.Perfil || rule.Perfil.trim() === '' || rule.Perfil.trim().toLowerCase() === alumnoPerfil.toLowerCase();
+      if (timeOk && perfilOk) {
         formIdsActivos.push(rule.FormularioId);
       }
     }
 
     if (!formIdsActivos.length) {
-      return res.json({ ...portal, formularios: [], fechaEgreso, semanaActual, mensaje: 'No tienes encuestas pendientes en este momento.' });
+      return res.json({ ...portal, formularios: [], fechaEgreso, semanaActual, perfil: alumnoPerfil, mensaje: 'No tienes encuestas pendientes en este momento.' });
     }
 
     const f = await pool.request().input('pid', sql.Int, portal.PortalId)
@@ -5810,7 +5833,7 @@ app.get('/api/public/portal/:slug/alumno', async (req, res) => {
               WHERE pf.PortalId=@pid AND f.FormularioId IN (${formIdsActivos.join(',')})
               ORDER BY f.Nombre`);
 
-    res.json({ ...portal, formularios: f.recordset, fechaEgreso, semanaActual });
+    res.json({ ...portal, formularios: f.recordset, fechaEgreso, semanaActual, perfil: alumnoPerfil });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
