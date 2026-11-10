@@ -5837,15 +5837,6 @@ app.get('/api/public/portal/:slug/alumno', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// DEBUG: check columns (temporary)
-app.get('/api/debug/etapas', async (req, res) => {
-  try {
-    if (!ensurePool(res)) return;
-    const r = await pool.request().query(`SELECT DISTINCT sEstatus, COUNT(*) AS cnt FROM dbo.OperacionesUDAT WHERE dFechaEgresoUDATReal IS NOT NULL AND dFechaEgresoUDATReal > '1901-01-01' AND (sEstatus IS NULL OR sEstatus NOT LIKE '%Baja%') GROUP BY sEstatus ORDER BY cnt DESC`);
-    res.json(r.recordset);
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
 // ── Seguimiento OPT ─────────────────────────────────────────────────────
 app.get('/api/seguimiento-opt', autenticar, async (req, res) => {
   try {
@@ -5881,8 +5872,7 @@ app.get('/api/seguimiento-opt', autenticar, async (req, res) => {
              sNumeroGeneracion AS Generacion,
              sCasaAsignada AS Perfil,
              dFechaEgresoUDATReal AS FechaEgreso,
-             sEstatus AS Estatus,
-             sEtapa AS Etapa
+             sEstatus AS Estatus
       FROM dbo.OperacionesUDAT
       WHERE dFechaEgresoUDATReal IS NOT NULL
         AND dFechaEgresoUDATReal > '1901-01-01'
@@ -5997,7 +5987,7 @@ app.get('/api/seguimiento-opt', autenticar, async (req, res) => {
         generacion: al.Generacion,
         perfil: al.Perfil,
         fechaEgreso: al.FechaEgreso,
-        etapa: al.Etapa || '',
+        etapa: al.Estatus || '',
         semanaActual,
         totalEncuestas,
         completadas,
