@@ -1264,6 +1264,18 @@ sql
             );
           END
 
+          IF OBJECT_ID('dbo.PortalCalendario','U') IS NULL
+          BEGIN
+            CREATE TABLE dbo.PortalCalendario (
+              CalendarioId    INT IDENTITY(1,1) PRIMARY KEY,
+              PortalId        INT NOT NULL,
+              FormularioId    INT NOT NULL,
+              SemanaInicio    INT NOT NULL,
+              DiasActiva      INT NOT NULL DEFAULT 7,
+              Orden           INT NOT NULL DEFAULT 0
+            );
+          END
+
           IF OBJECT_ID('dbo.FormPreguntas','U') IS NULL
           BEGIN
             CREATE TABLE dbo.FormPreguntas (
@@ -5599,9 +5611,11 @@ app.get('/api/portales', autenticar, async (req, res) => {
     if (!ensurePool(res)) return;
     const r = await pool.request().query('SELECT * FROM dbo.Portales ORDER BY Nombre');
     const pf = await pool.request().query('SELECT * FROM dbo.PortalFormularios');
+    const cal = await pool.request().query('SELECT * FROM dbo.PortalCalendario ORDER BY Orden');
     const portales = r.recordset.map(p => ({
       ...p,
       formularioIds: pf.recordset.filter(f => f.PortalId === p.PortalId).map(f => f.FormularioId),
+      calendario: cal.recordset.filter(c => c.PortalId === p.PortalId),
     }));
     res.json(portales);
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -5610,7 +5624,7 @@ app.get('/api/portales', autenticar, async (req, res) => {
 app.post('/api/portales', autenticar, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
-    const { nombre, slug, descripcion, formularioIds } = req.body;
+    const { nombre, slug, descripcion, formularioIds, calendario } = req.body;
     if (!nombre || !slug) return res.status(400).json({ error: 'nombre y slug requeridos' });
     const cleanSlug = slug.toLowerCase().replace(/[^a-z0-9-]/g, '');
     const r = await pool.request()
@@ -5625,6 +5639,16 @@ app.post('/api/portales', autenticar, async (req, res) => {
         .input('fid', sql.Int, fid)
         .query('INSERT INTO dbo.PortalFormularios(PortalId,FormularioId) VALUES(@pid,@fid)');
     }
+    for (let ci = 0; ci < (calendario || []).length; ci++) {
+      const c = calendario[ci];
+      await pool.request()
+        .input('pid', sql.Int, portalId)
+        .input('fid', sql.Int, c.formularioId)
+        .input('si', sql.Int, c.semanaInicio)
+        .input('da', sql.Int, c.diasActiva || 7)
+        .input('o', sql.Int, ci)
+        .query('INSERT INTO dbo.PortalCalendario(PortalId,FormularioId,SemanaInicio,DiasActiva,Orden) VALUES(@pid,@fid,@si,@da,@o)');
+    }
     res.json({ PortalId: portalId });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -5633,7 +5657,7 @@ app.put('/api/portales/:id', autenticar, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
     const id = Number(req.params.id);
-    const { nombre, slug, descripcion, activo, formularioIds } = req.body;
+    const { nombre, slug, descripcion, activo, formularioIds, calendario } = req.body;
     const cleanSlug = slug ? slug.toLowerCase().replace(/[^a-z0-9-]/g, '') : undefined;
     const rq = pool.request().input('id', sql.Int, id);
     const sets = [];
@@ -5651,6 +5675,19 @@ app.put('/api/portales/:id', autenticar, async (req, res) => {
           .query('INSERT INTO dbo.PortalFormularios(PortalId,FormularioId) VALUES(@pid,@fid)');
       }
     }
+    if (calendario !== undefined) {
+      await pool.request().input('id', sql.Int, id).query('DELETE FROM dbo.PortalCalendario WHERE PortalId=@id');
+      for (let ci = 0; ci < (calendario || []).length; ci++) {
+        const c = calendario[ci];
+        await pool.request()
+          .input('pid', sql.Int, id)
+          .input('fid', sql.Int, c.formularioId || c.FormularioId)
+          .input('si', sql.Int, c.semanaInicio || c.SemanaInicio)
+          .input('da', sql.Int, c.diasActiva || c.DiasActiva || 7)
+          .input('o', sql.Int, ci)
+          .query('INSERT INTO dbo.PortalCalendario(PortalId,FormularioId,SemanaInicio,DiasActiva,Orden) VALUES(@pid,@fid,@si,@da,@o)');
+      }
+    }
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -5659,6 +5696,7 @@ app.delete('/api/portales/:id', autenticar, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
     const id = Number(req.params.id);
+    await pool.request().input('id', sql.Int, id).query('DELETE FROM dbo.PortalCalendario WHERE PortalId=@id');
     await pool.request().input('id', sql.Int, id).query('DELETE FROM dbo.PortalFormularios WHERE PortalId=@id');
     await pool.request().input('id', sql.Int, id).query('DELETE FROM dbo.Portales WHERE PortalId=@id');
     res.json({ ok: true });
@@ -5679,7 +5717,100 @@ app.get('/api/public/portal/:slug', async (req, res) => {
               INNER JOIN dbo.PortalFormularios pf ON pf.FormularioId=f.FormularioId
               WHERE pf.PortalId=@pid
               ORDER BY f.Nombre`);
-    res.json({ ...portal, formularios: f.recordset });
+    // Include calendario info
+    const cal = await pool.request().input('pid', sql.Int, portal.PortalId)
+      .query('SELECT * FROM dbo.PortalCalendario WHERE PortalId=@pid ORDER BY Orden');
+    const hasCalendario = cal.recordset.length > 0;
+    res.json({ ...portal, formularios: f.recordset, calendario: cal.recordset, hasCalendario });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/public/alumno-egreso — fecha de egreso de un alumno por matrícula
+app.get('/api/public/alumno-egreso', async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const matricula = req.query.matricula;
+    if (!matricula) return res.status(400).json({ error: 'matricula requerida' });
+    const r = await pool.request()
+      .input('m', sql.NVarChar(100), matricula)
+      .query(`SELECT TOP 1 sPerfil, dFechaEgresoUDATReal, sNumeroGeneracion
+              FROM dbo.OperacionesUDAT
+              WHERE sPerfil = @m AND dFechaEgresoUDATReal IS NOT NULL
+              ORDER BY dFechaEgresoUDATReal DESC`);
+    if (!r.recordset[0]) return res.json({ found: false });
+    const row = r.recordset[0];
+    res.json({
+      found: true,
+      matricula: row.sPerfil,
+      fechaEgreso: row.dFechaEgresoUDATReal,
+      generacion: row.sNumeroGeneracion,
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/public/portal/:slug/alumno — formularios disponibles según calendario del alumno
+app.get('/api/public/portal/:slug/alumno', async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const slug = req.params.slug;
+    const matricula = req.query.matricula;
+    if (!matricula) return res.status(400).json({ error: 'matricula requerida' });
+
+    const p = await pool.request().input('s', sql.NVarChar(100), slug)
+      .query('SELECT * FROM dbo.Portales WHERE Slug=@s AND Activo=1');
+    if (!p.recordset[0]) return res.status(404).json({ error: 'Portal no encontrado' });
+    const portal = p.recordset[0];
+
+    // Get fecha egreso
+    const eg = await pool.request().input('m', sql.NVarChar(100), matricula)
+      .query(`SELECT TOP 1 dFechaEgresoUDATReal FROM dbo.OperacionesUDAT
+              WHERE sPerfil = @m AND dFechaEgresoUDATReal IS NOT NULL
+              ORDER BY dFechaEgresoUDATReal DESC`);
+    if (!eg.recordset[0]) return res.json({ ...portal, formularios: [], mensaje: 'Sin fecha de egreso registrada' });
+    const fechaEgreso = new Date(eg.recordset[0].dFechaEgresoUDATReal);
+
+    // Get calendario rules
+    const cal = await pool.request().input('pid', sql.Int, portal.PortalId)
+      .query('SELECT * FROM dbo.PortalCalendario WHERE PortalId=@pid ORDER BY Orden');
+
+    if (!cal.recordset.length) {
+      // No calendar rules, show all forms
+      const f = await pool.request().input('pid', sql.Int, portal.PortalId)
+        .query(`SELECT f.FormularioId, f.Nombre, f.Descripcion, f.Slug
+                FROM dbo.Formularios f
+                INNER JOIN dbo.PortalFormularios pf ON pf.FormularioId=f.FormularioId
+                WHERE pf.PortalId=@pid ORDER BY f.Nombre`);
+      return res.json({ ...portal, formularios: f.recordset, fechaEgreso, semanaActual: null });
+    }
+
+    // Calculate current week since egreso
+    const now = new Date();
+    const diffMs = now - fechaEgreso;
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    const semanaActual = Math.floor(diffDays / 7) + 1;
+
+    // Filter forms by calendar rules
+    const formIdsActivos = [];
+    for (const rule of cal.recordset) {
+      const diaInicioRegla = (rule.SemanaInicio - 1) * 7;
+      const diaFinRegla = diaInicioRegla + rule.DiasActiva;
+      if (diffDays >= diaInicioRegla && diffDays < diaFinRegla) {
+        formIdsActivos.push(rule.FormularioId);
+      }
+    }
+
+    if (!formIdsActivos.length) {
+      return res.json({ ...portal, formularios: [], fechaEgreso, semanaActual, mensaje: 'No tienes encuestas pendientes en este momento.' });
+    }
+
+    const f = await pool.request().input('pid', sql.Int, portal.PortalId)
+      .query(`SELECT f.FormularioId, f.Nombre, f.Descripcion, f.Slug
+              FROM dbo.Formularios f
+              INNER JOIN dbo.PortalFormularios pf ON pf.FormularioId=f.FormularioId
+              WHERE pf.PortalId=@pid AND f.FormularioId IN (${formIdsActivos.join(',')})
+              ORDER BY f.Nombre`);
+
+    res.json({ ...portal, formularios: f.recordset, fechaEgreso, semanaActual });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
