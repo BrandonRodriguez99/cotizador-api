@@ -5837,6 +5837,173 @@ app.get('/api/public/portal/:slug/alumno', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── Seguimiento OPT ─────────────────────────────────────────────────────
+app.get('/api/seguimiento-opt', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const portalId = req.query.portalId ? Number(req.query.portalId) : null;
+
+    // 1. Get portals with calendar rules
+    const portalesRes = await pool.request().query(`
+      SELECT p.* FROM dbo.Portales p
+      WHERE EXISTS (SELECT 1 FROM dbo.PortalCalendario c WHERE c.PortalId=p.PortalId)`);
+    const portales = portalesRes.recordset;
+    if (!portales.length) return res.json({ portales: [], alumnos: [] });
+
+    // Filter to specific portal if requested
+    const targetPortales = portalId ? portales.filter(p => p.PortalId === portalId) : portales;
+    if (!targetPortales.length) return res.json({ portales, alumnos: [] });
+
+    const targetIds = targetPortales.map(p => p.PortalId);
+
+    // 2. Get calendar rules for target portals
+    const calRes = await pool.request().query(`
+      SELECT c.*, f.Nombre AS FormularioNombre, f.Slug AS FormularioSlug
+      FROM dbo.PortalCalendario c
+      JOIN dbo.Formularios f ON f.FormularioId=c.FormularioId
+      WHERE c.PortalId IN (${targetIds.join(',')})
+      ORDER BY c.PortalId, c.Orden`);
+    const reglas = calRes.recordset;
+
+    // 3. Get all active OPT students (exclude Baja)
+    const alumnosRes = await pool.request().query(`
+      SELECT sPerfil AS Matricula,
+             sNombreCompleto AS Nombre,
+             sNumeroGeneracion AS Generacion,
+             sCasaAsignada AS Perfil,
+             dFechaEgresoUDATReal AS FechaEgreso,
+             sEstatus AS Estatus
+      FROM dbo.OperacionesUDAT
+      WHERE dFechaEgresoUDATReal IS NOT NULL
+        AND dFechaEgresoUDATReal > '1901-01-01'
+        AND (sEstatus IS NULL OR sEstatus NOT LIKE '%Baja%')
+      ORDER BY sNombreCompleto`);
+    const alumnos = alumnosRes.recordset;
+
+    // 4. Get formulario IDs involved in calendar rules
+    const formIds = [...new Set(reglas.map(r => r.FormularioId))];
+    if (!formIds.length) return res.json({ portales, alumnos: [] });
+
+    // 5. Find alumno-type questions in those forms
+    const alumnoQRes = await pool.request().query(`
+      SELECT p.PreguntaId, p.SeccionId, s.FormularioId
+      FROM dbo.FormPreguntas p
+      JOIN dbo.FormSecciones s ON s.SeccionId=p.SeccionId
+      WHERE p.TipoRespuesta='alumno' AND s.FormularioId IN (${formIds.join(',')})`);
+    const alumnoPreguntas = alumnoQRes.recordset;
+
+    // 6. Get all responses for these forms with their alumno field values
+    const respRes = await pool.request().query(`
+      SELECT r.RespuestaId, r.FormularioId, r.FechaEnvio, r.OperadorNombre,
+             rv.Valor AS AlumnoValor
+      FROM dbo.FormRespuestas r
+      LEFT JOIN dbo.FormRespuestaValores rv ON rv.RespuestaId=r.RespuestaId
+        AND rv.PreguntaId IN (${alumnoPreguntas.length ? alumnoPreguntas.map(q => q.PreguntaId).join(',') : '0'})
+      WHERE r.FormularioId IN (${formIds.join(',')})`);
+
+    // Build a map: matricula -> { formId -> [fechas] }
+    const respuestasPorAlumno = {};
+    for (const r of respRes.recordset) {
+      let matricula = null;
+      if (r.AlumnoValor) {
+        try {
+          const parsed = JSON.parse(r.AlumnoValor);
+          matricula = parsed.matricula || null;
+        } catch { /* not JSON, try direct */ }
+      }
+      if (!matricula) {
+        // Fallback: use OperadorNombre to try to match
+        continue;
+      }
+      if (!respuestasPorAlumno[matricula]) respuestasPorAlumno[matricula] = {};
+      if (!respuestasPorAlumno[matricula][r.FormularioId]) respuestasPorAlumno[matricula][r.FormularioId] = [];
+      respuestasPorAlumno[matricula][r.FormularioId].push(r.FechaEnvio);
+    }
+
+    // 7. Build tracking per alumno
+    const now = new Date();
+    const resultado = alumnos.map(al => {
+      const fechaEgreso = new Date(al.FechaEgreso);
+      const diffMs = now - fechaEgreso;
+      const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+      const semanaActual = diffDays >= 0 ? Math.floor(diffDays / 7) + 1 : 0;
+
+      // Get applicable rules for this student (matching perfil)
+      const reglasAlumno = reglas.filter(r => {
+        const portalOk = targetIds.includes(r.PortalId);
+        const perfilOk = !r.Perfil || r.Perfil.trim() === '' ||
+          r.Perfil.trim().toLowerCase() === (al.Perfil || '').trim().toLowerCase();
+        return portalOk && perfilOk;
+      });
+
+      const encuestas = reglasAlumno.map(r => {
+        const diaInicio = (r.SemanaInicio - 1) * 7;
+        const diaFin = diaInicio + r.DiasActiva;
+        const respondidas = (respuestasPorAlumno[al.Matricula] || {})[r.FormularioId] || [];
+        // Check if responded within the rule's window
+        const respondida = respondidas.some(fecha => {
+          const fResp = new Date(fecha);
+          const diffResp = Math.floor((fResp - fechaEgreso) / (1000 * 60 * 60 * 24));
+          return diffResp >= diaInicio && diffResp < diaFin;
+        });
+        // Also check if responded at all for this form (any time)
+        const respondidaAlguna = respondidas.length > 0;
+
+        let estado = 'pendiente';
+        if (respondida) {
+          estado = 'completada';
+        } else if (diffDays >= diaFin) {
+          estado = 'vencida';
+        } else if (diffDays >= diaInicio && diffDays < diaFin) {
+          estado = 'activa';
+        } else {
+          estado = 'futura';
+        }
+
+        return {
+          formularioId: r.FormularioId,
+          formularioNombre: r.FormularioNombre,
+          semanaInicio: r.SemanaInicio,
+          diasActiva: r.DiasActiva,
+          perfil: r.Perfil,
+          estado,
+          respondida,
+          respondidaAlguna,
+          fechaRespuesta: respondida ? respondidas.find(f => {
+            const d = Math.floor((new Date(f) - fechaEgreso) / (1000*60*60*24));
+            return d >= diaInicio && d < diaFin;
+          }) : (respondidaAlguna ? respondidas[0] : null),
+        };
+      });
+
+      const totalEncuestas = encuestas.length;
+      const completadas = encuestas.filter(e => e.estado === 'completada').length;
+      const vencidas = encuestas.filter(e => e.estado === 'vencida').length;
+      const activas = encuestas.filter(e => e.estado === 'activa').length;
+
+      return {
+        matricula: al.Matricula,
+        nombre: al.Nombre,
+        generacion: al.Generacion,
+        perfil: al.Perfil,
+        fechaEgreso: al.FechaEgreso,
+        semanaActual,
+        totalEncuestas,
+        completadas,
+        vencidas,
+        activas,
+        porcentaje: totalEncuestas ? Math.round((completadas / totalEncuestas) * 100) : 0,
+        encuestas,
+      };
+    });
+
+    // Filter out students with 0 applicable rules
+    const filtered = resultado.filter(a => a.totalEncuestas > 0);
+
+    res.json({ portales, alumnos: filtered });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.post('/api/public/solicitud-vehiculo', async (req, res) => {
   try {
     if (!ensurePool(res)) return;
