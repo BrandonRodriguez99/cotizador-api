@@ -5837,6 +5837,15 @@ app.get('/api/public/portal/:slug/alumno', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// DEBUG: columns of OperacionesUDAT (temporary)
+app.get('/api/debug/columns', async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const r = await pool.request().query(`SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='OperacionesUDAT' ORDER BY ORDINAL_POSITION`);
+    res.json(r.recordset.map(x => x.COLUMN_NAME));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ── Seguimiento OPT ─────────────────────────────────────────────────────
 app.get('/api/seguimiento-opt', autenticar, async (req, res) => {
   try {
