@@ -6149,7 +6149,8 @@ app.get('/api/seguimiento-opt/:matricula/evaluaciones', autenticar, async (req, 
     const evaluaciones = [];
     for (const resp of respRes.recordset) {
       const vRes = await pool.request().input('rid', sql.Int, resp.RespuestaId)
-        .query(`SELECT rv.PreguntaId, rv.Valor, p.Texto, p.TipoRespuesta
+        .query(`SELECT rv.PreguntaId, rv.Valor, p.Texto, p.TipoRespuesta,
+                s.SeccionId, s.Titulo AS SeccionTitulo, s.Orden AS SeccionOrden
                 FROM dbo.FormRespuestaValores rv
                 JOIN dbo.FormPreguntas p ON p.PreguntaId=rv.PreguntaId
                 JOIN dbo.FormSecciones s ON s.SeccionId=p.SeccionId
@@ -6171,6 +6172,26 @@ app.get('/api/seguimiento-opt/:matricula/evaluaciones', autenticar, async (req, 
       const tipo = calCheck.recordset[0] ? 'alumno' : 'encargado';
       const portal = calCheck.recordset[0]?.PortalNombre || nocalCheck.recordset[0]?.PortalNombre || '';
 
+      // Calculate section scores for OPT weekly evaluations (FormularioId=3)
+      let secciones = null;
+      let calificacion = null;
+      if (tipo === 'encargado') {
+        const secMap = {};
+        for (const v of vRes.recordset) {
+          if (v.TipoRespuesta !== 'escala') continue;
+          if (v.SeccionOrden < 2) continue;
+          const key = v.SeccionOrden;
+          if (!secMap[key]) secMap[key] = { titulo: v.SeccionTitulo, orden: v.SeccionOrden, suma: 0, preguntas: 0 };
+          const num = parseFloat(v.Valor);
+          if (!isNaN(num)) { secMap[key].suma += num; secMap[key].preguntas++; }
+        }
+        const secArr = Object.values(secMap).sort((a, b) => a.orden - b.orden);
+        if (secArr.length > 0) {
+          secciones = secArr.map(s => ({ titulo: s.titulo, puntos: s.suma, max: s.preguntas <= 5 ? 100 : 100 }));
+          calificacion = Math.round(secArr.reduce((sum, s) => sum + s.suma, 0) / secArr.length);
+        }
+      }
+
       evaluaciones.push({
         respuestaId: resp.RespuestaId,
         formularioId: resp.FormularioId,
@@ -6179,6 +6200,8 @@ app.get('/api/seguimiento-opt/:matricula/evaluaciones', autenticar, async (req, 
         operador: resp.OperadorNombre,
         tipo,
         portal,
+        secciones,
+        calificacion,
         valores: vRes.recordset.map(v => ({
           pregunta: v.Texto,
           tipo: v.TipoRespuesta,
