@@ -6003,6 +6003,50 @@ app.get('/api/seguimiento-opt', autenticar, async (req, res) => {
     // Filter out students with 0 applicable rules
     const filtered = resultado.filter(a => a.totalEncuestas > 0);
 
+    // 8. Batch-load km/hrs from PracticaTractorOPT via UDAT
+    if (poolUDAT && filtered.length > 0) {
+      try {
+        const mats = filtered.map(a => a.matricula).filter(Boolean);
+        const matList = mats.map(m => `'${m.replace(/'/g, "''")}'`).join(',');
+        const opRes = await poolUDAT.request().query(`
+          SELECT OperadorId, Matricula FROM dbo.Operador
+          WHERE Matricula IN (${matList}) AND Eliminado = 0`);
+        const matToOpId = {};
+        for (const r of opRes.recordset) matToOpId[r.Matricula] = r.OperadorId;
+
+        const opIds = Object.values(matToOpId);
+        if (opIds.length > 0) {
+          const practRes = await poolUDAT.request().query(`
+            SELECT OperadorId,
+              SUM(ISNULL(KilometrajeFinal,0) - ISNULL(KilometrajeInicial,0)) AS TotalKm,
+              SUM(DATEDIFF(MINUTE, FechaHoraInicio, FechaHoraFin)) AS TotalMin,
+              COUNT(*) AS Registros,
+              MAX(NombreUnidadNegocio) AS UN, MAX(UnidadOperativa) AS UO, MAX(EmpresaId) AS EmpId
+            FROM dbo.PracticaTractorOPT
+            WHERE OperadorId IN (${opIds.join(',')}) AND (Eliminado = 0 OR Eliminado IS NULL)
+            GROUP BY OperadorId`);
+          const opIdToData = {};
+          for (const r of practRes.recordset) opIdToData[r.OperadorId] = r;
+
+          for (const al of filtered) {
+            const opId = matToOpId[al.matricula];
+            const d = opId ? opIdToData[opId] : null;
+            if (d) {
+              const meta = findMeta(d.EmpId, d.UN, d.UO);
+              al.totalKm = Math.max(0, d.TotalKm || 0);
+              al.totalHrs = Math.round(Math.max(0, d.TotalMin || 0) / 60 * 10) / 10;
+              al.metaKm = meta ? meta.metaKm : null;
+              al.metaHrs = meta ? meta.metaHrs : null;
+              al.pctKm = meta ? Math.round(al.totalKm / meta.metaKm * 100) : null;
+              al.pctHrs = meta ? Math.round(al.totalHrs / meta.metaHrs * 100) : null;
+            } else {
+              al.totalKm = 0; al.totalHrs = 0; al.metaKm = null; al.metaHrs = null; al.pctKm = null; al.pctHrs = null;
+            }
+          }
+        }
+      } catch (e) { console.log('Warn: km/hrs load failed:', e.message); }
+    }
+
     res.json({ portales, alumnos: filtered });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
