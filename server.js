@@ -6035,11 +6035,72 @@ app.get('/api/seguimiento-opt/:matricula/evaluaciones', autenticar, async (req, 
         AND rv.Valor LIKE '%"matricula":"${matricula.replace(/'/g, "''")}"%'
       ORDER BY r.FechaEnvio DESC`);
 
+    // Load question options for severity analysis
+    const allRespIds = respRes.recordset.map(r => r.RespuestaId);
+    const pregMap = {};
+    if (allRespIds.length > 0) {
+      const valBatch = await pool.request().query(`
+        SELECT DISTINCT rv.PreguntaId
+        FROM dbo.FormRespuestaValores rv
+        WHERE rv.RespuestaId IN (${allRespIds.join(',')})`);
+      const pIds = valBatch.recordset.map(r => r.PreguntaId);
+      if (pIds.length > 0) {
+        const pRes = await pool.request().query(`
+          SELECT p.PreguntaId, p.Texto, p.TipoRespuesta FROM dbo.FormPreguntas p
+          WHERE p.PreguntaId IN (${pIds.join(',')})`);
+        const oRes = await pool.request().query(`
+          SELECT o.PreguntaId, o.Texto, o.Orden FROM dbo.FormOpciones o
+          WHERE o.PreguntaId IN (${pIds.join(',')}) ORDER BY o.PreguntaId, o.Orden`);
+        for (const p of pRes.recordset) {
+          pregMap[p.PreguntaId] = { texto: p.Texto, tipo: p.TipoRespuesta, opciones: [], totalOpciones: 0 };
+        }
+        for (const o of oRes.recordset) {
+          if (pregMap[o.PreguntaId]) { pregMap[o.PreguntaId].opciones.push({ texto: o.Texto, orden: o.Orden }); pregMap[o.PreguntaId].totalOpciones++; }
+        }
+      }
+    }
+
+    const negativeKeywords = ['mal', 'no me', 'difícil', 'dificil', 'problema', 'problemas', 'incómodo', 'incomodo', 'triste', 'miedo', 'preocup', 'estres', 'estrés', 'cansad', 'frustrad', 'insegur', 'confus', 'no he podido', 'afectando'];
+
+    function analyzeSeverity(preguntaId, valor) {
+      const preg = pregMap[preguntaId];
+      if (!preg) return null;
+      if (preg.tipo === 'alumno' || preg.tipo === 'operador_tutor') return null;
+      const val = (valor || '').trim();
+      const valLower = val.toLowerCase();
+
+      if ((preg.tipo === 'seleccion' || preg.tipo === 'lista') && preg.totalOpciones >= 2) {
+        const selOpt = preg.opciones.find(o => o.texto.trim().toLowerCase() === valLower);
+        if (selOpt) {
+          const pos = selOpt.orden, total = preg.totalOpciones;
+          const pregLower = preg.texto.toLowerCase();
+          const firstOptLower = (preg.opciones.find(o => o.orden === 0)?.texto || '').toLowerCase();
+          if (total === 2 && /dificult|problema|dificil/.test(pregLower) && pos === 0 && /^s[ií]/i.test(val)) return 'alto';
+          if (total >= 3 && /no he tenido|no tuve|sin dificultad|ninguna/.test(firstOptLower) && pos > 0) return 'alto';
+          const sev = pos / (total - 1);
+          if (sev >= 0.75) return 'alto';
+          if (sev >= 0.5) return 'medio';
+        }
+      }
+      if ((preg.tipo === 'si_no_na' || preg.tipo === 'si_no') && valLower === 'no') return 'medio';
+      if ((preg.tipo === 'escala' || preg.tipo === 'numero') && preg.totalOpciones >= 2) {
+        const num = parseFloat(val);
+        if (!isNaN(num)) {
+          const maxVal = Math.max(...preg.opciones.map(o => parseFloat(o.texto) || 0));
+          if (maxVal > 0) { const r = num / maxVal; if (r <= 0.3) return 'alto'; if (r <= 0.5) return 'medio'; }
+        }
+      }
+      if (preg.tipo === 'texto' || preg.tipo === 'textarea') {
+        if (valLower.length > 3) { for (const kw of negativeKeywords) { if (valLower.includes(kw)) return 'medio'; } }
+      }
+      return null;
+    }
+
     // For each response, get all values
     const evaluaciones = [];
     for (const resp of respRes.recordset) {
       const vRes = await pool.request().input('rid', sql.Int, resp.RespuestaId)
-        .query(`SELECT rv.Valor, p.Texto, p.TipoRespuesta
+        .query(`SELECT rv.PreguntaId, rv.Valor, p.Texto, p.TipoRespuesta
                 FROM dbo.FormRespuestaValores rv
                 JOIN dbo.FormPreguntas p ON p.PreguntaId=rv.PreguntaId
                 JOIN dbo.FormSecciones s ON s.SeccionId=p.SeccionId
@@ -6073,6 +6134,7 @@ app.get('/api/seguimiento-opt/:matricula/evaluaciones', autenticar, async (req, 
           pregunta: v.Texto,
           tipo: v.TipoRespuesta,
           valor: v.Valor,
+          severity: analyzeSeverity(v.PreguntaId, v.Valor),
         })),
       });
     }
