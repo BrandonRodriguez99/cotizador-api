@@ -6114,7 +6114,7 @@ app.get('/api/seguimiento-opt/:matricula/evaluaciones', autenticar, async (req, 
     function analyzeSeverity(preguntaId, valor) {
       const preg = pregMap[preguntaId];
       if (!preg) return null;
-      if (preg.tipo === 'alumno' || preg.tipo === 'operador_tutor') return null;
+      if (preg.tipo === 'alumno' || preg.tipo === 'operador_tutor' || preg.tipo === 'opt') return null;
       const val = (valor || '').trim();
       const valLower = val.toLowerCase();
 
@@ -6192,12 +6192,20 @@ app.get('/api/seguimiento-opt/:matricula/evaluaciones', autenticar, async (req, 
         }
       }
 
+      let operadorTutor = null;
+      for (const v of vRes.recordset) {
+        if (v.TipoRespuesta === 'opt' && v.Valor) {
+          try { const p = JSON.parse(v.Valor); operadorTutor = p.operador || null; } catch {}
+        }
+      }
+
       evaluaciones.push({
         respuestaId: resp.RespuestaId,
         formularioId: resp.FormularioId,
         formularioNombre: resp.FormularioNombre,
         fecha: resp.FechaEnvio,
         operador: resp.OperadorNombre,
+        operadorTutor,
         tipo,
         portal,
         secciones,
@@ -6206,6 +6214,8 @@ app.get('/api/seguimiento-opt/:matricula/evaluaciones', autenticar, async (req, 
           pregunta: v.Texto,
           tipo: v.TipoRespuesta,
           valor: v.Valor,
+          seccionTitulo: v.SeccionTitulo,
+          seccionOrden: v.SeccionOrden,
           severity: analyzeSeverity(v.PreguntaId, v.Valor),
         })),
       });
@@ -6342,7 +6352,7 @@ app.get('/api/seguimiento-opt-alertas', autenticar, async (req, res) => {
         for (const v of valores) {
           const preg = pregMap[v.PreguntaId];
           if (!preg) continue;
-          if (preg.tipo === 'alumno' || preg.tipo === 'operador_tutor') continue;
+          if (preg.tipo === 'alumno' || preg.tipo === 'operador_tutor' || preg.tipo === 'opt') continue;
           const val = (v.Valor || '').trim();
           const valLower = val.toLowerCase();
 
