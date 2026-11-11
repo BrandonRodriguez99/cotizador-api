@@ -6393,6 +6393,111 @@ app.get('/api/seguimiento-opt-alertas', autenticar, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── Seguimiento OPT — Prácticas Km/Hrs ─────────────────────────────────
+const METAS_KM_HRS = [
+  { empresa: 'ALA', un: 'INTERNACIONAL', uo: 'Cruces', metaKm: 1000, metaHrs: 96 },
+  { empresa: 'ALA', un: 'INTERNACIONAL', uo: 'Ruta Corta', metaKm: 8000, metaHrs: 96 },
+  { empresa: 'ALA', un: 'INTERNACIONAL', uo: 'Import Export', metaKm: 8500, metaHrs: 96 },
+  { empresa: 'ALA', un: 'INTERMODAL', uo: 'IM Nuevo Laredo', metaKm: 8500, metaHrs: 96 },
+  { empresa: 'ALA', un: 'INTERMODAL', uo: 'IM Derramadero', metaKm: 8500, metaHrs: 96 },
+  { empresa: 'ALA', un: 'INTERMODAL', uo: 'IM Monterrey', metaKm: 8500, metaHrs: 96 },
+  { empresa: 'ALA', un: 'INTERMODAL', uo: 'IM SLP', metaKm: 8500, metaHrs: 96 },
+  { empresa: 'ALA', un: 'INTERMODAL', uo: 'IM Toluca', metaKm: 8500, metaHrs: 96 },
+  { empresa: 'ALA', un: 'INTERMODAL', uo: 'IM Queretaro', metaKm: 8500, metaHrs: 96 },
+  { empresa: 'ALA', un: 'INTERMODAL', uo: 'IM Celaya', metaKm: 8500, metaHrs: 96 },
+  { empresa: 'ALA', un: 'AUTOMOTRIZ', uo: 'Toyota Tijuana', metaKm: 3200, metaHrs: 96 },
+  { empresa: 'ALA', un: 'AUTOMOTRIZ', uo: 'Toyota Celaya', metaKm: 3200, metaHrs: 96 },
+  { empresa: 'ALA', un: 'AUTOMOTRIZ', uo: 'Toyota SLP', metaKm: 3200, metaHrs: 96 },
+  { empresa: 'ALA', un: 'AUTOMOTRIZ', uo: 'Operaciones Celaya', metaKm: 3200, metaHrs: 96 },
+  { empresa: 'ALA', un: 'AUTOMOTRIZ', uo: 'Cuentas Nacionales', metaKm: 3200, metaHrs: 96 },
+  { empresa: 'LARMEX', un: 'NACIONAL', uo: 'NAC 5', metaKm: 16200, metaHrs: 240 },
+  { empresa: 'LARMEX', un: 'NACIONAL', uo: 'NAC 6', metaKm: 16200, metaHrs: 240 },
+  { empresa: 'LARMEX', un: 'NACIONAL', uo: 'NAC 7', metaKm: 16200, metaHrs: 240 },
+  { empresa: 'LARMEX', un: 'NACIONAL', uo: 'NAC RL', metaKm: 16200, metaHrs: 240 },
+  { empresa: 'LARMEX', un: 'NACIONAL', uo: 'NAC SWI', metaKm: 16200, metaHrs: 240 },
+  { empresa: 'LARMEX', un: 'NACIONAL', uo: 'ACEROS SWI', metaKm: 16200, metaHrs: 240 },
+  { empresa: 'LARMEX', un: 'NACIONAL', uo: 'NAC RC', metaKm: 16200, metaHrs: 240 },
+  { empresa: 'LARMEX', un: 'NACIONAL', uo: 'NAC SWI (QRO)', metaKm: 16200, metaHrs: 240 },
+  { empresa: 'LARMEX', un: 'IMPORT-EXPORT', uo: 'I/E RC', metaKm: 16200, metaHrs: 240 },
+  { empresa: 'LARMEX', un: 'IMPORT-EXPORT', uo: 'I/E RL', metaKm: 16200, metaHrs: 240 },
+  { empresa: 'LARMEX', un: 'IMPORT-EXPORT', uo: 'I/E BAJIO', metaKm: 16200, metaHrs: 240 },
+  { empresa: 'LARMEX', un: 'INTERMODAL', uo: 'IM RC', metaKm: 16200, metaHrs: 240 },
+  { empresa: 'LARMEX', un: 'INTERMODAL', uo: 'IM SWI', metaKm: 16200, metaHrs: 240 },
+  { empresa: 'LARMEX', un: 'INTERMODAL', uo: 'IM 6', metaKm: 16200, metaHrs: 240 },
+  { empresa: 'LARMEX', un: 'GM', uo: 'GM SLP FORANEO', metaKm: 16200, metaHrs: 240 },
+  { empresa: 'LARMEX', un: 'GM', uo: 'GM SLP LOCAL', metaKm: 16200, metaHrs: 240 },
+  { empresa: 'LARMEX', un: 'GM', uo: 'GM SALTILLO', metaKm: 16200, metaHrs: 240 },
+  { empresa: 'LARMEX', un: 'FORD', uo: 'FORD INT NTE', metaKm: 16200, metaHrs: 240 },
+  { empresa: 'LARMEX', un: 'FORD', uo: 'FORD SUR', metaKm: 16200, metaHrs: 240 },
+  { empresa: 'LARMEX', un: 'FORD', uo: 'HERMOSILLO', metaKm: 16200, metaHrs: 240 },
+  { empresa: 'LARMEX', un: 'FORD', uo: 'CHIHUAHUA', metaKm: 16200, metaHrs: 240 },
+];
+
+function findMeta(empresaId, un, uo) {
+  const empresa = empresaId === 1 ? 'ALA' : empresaId === 10 ? 'LARMEX' : null;
+  if (!empresa) return null;
+  const unUp = (un || '').toUpperCase().trim();
+  const uoUp = (uo || '').toUpperCase().trim();
+  return METAS_KM_HRS.find(m =>
+    m.empresa === empresa && m.un.toUpperCase() === unUp && m.uo.toUpperCase() === uoUp
+  ) || null;
+}
+
+app.get('/api/seguimiento-opt/:nombre/practicas', autenticar, async (req, res) => {
+  try {
+    if (!poolUDAT) return res.status(500).json({ error: 'Sin conexión a UDAT' });
+    const nombre = decodeURIComponent(req.params.nombre);
+
+    const result = await poolUDAT.request()
+      .input('nombre', sql.NVarChar(300), nombre)
+      .query(`
+        SELECT Semana, EmpresaId, NombreUnidadNegocio, UnidadOperativa,
+               ISNULL(KilometrajeFinal,0) - ISNULL(KilometrajeInicial,0) AS Km,
+               DATEDIFF(MINUTE, FechaHoraInicio, FechaHoraFin) AS Minutos,
+               FechaHoraInicio, FechaHoraFin, OperadorTutorId,
+               GerenteUnidadNegocio, LiderUnidadOperativa
+        FROM dbo.PracticaTractorOPT
+        WHERE NombreOPT = @nombre AND (Eliminado = 0 OR Eliminado IS NULL)
+        ORDER BY Semana, FechaHoraInicio`);
+
+    if (!result.recordset.length) return res.json({ registros: 0, totalKm: 0, totalHrs: 0, semanas: [], meta: null });
+
+    let totalKm = 0, totalMin = 0;
+    const semanaMap = {};
+    let empresaId = null, unNombre = null, uoNombre = null;
+
+    for (const r of result.recordset) {
+      const km = Math.max(0, r.Km || 0);
+      const min = Math.max(0, r.Minutos || 0);
+      totalKm += km;
+      totalMin += min;
+      if (!empresaId && r.EmpresaId) { empresaId = r.EmpresaId; unNombre = r.NombreUnidadNegocio; uoNombre = r.UnidadOperativa; }
+
+      if (!semanaMap[r.Semana]) semanaMap[r.Semana] = { semana: r.Semana, km: 0, minutos: 0, viajes: 0 };
+      semanaMap[r.Semana].km += km;
+      semanaMap[r.Semana].minutos += min;
+      semanaMap[r.Semana].viajes++;
+    }
+
+    const semanas = Object.values(semanaMap).sort((a, b) => a.semana - b.semana)
+      .map(s => ({ ...s, horas: Math.round(s.minutos / 60 * 10) / 10 }));
+
+    const meta = findMeta(empresaId, unNombre, uoNombre);
+    const totalHrs = Math.round(totalMin / 60 * 10) / 10;
+    const empresa = empresaId === 1 ? 'ALA' : empresaId === 10 ? 'LARMEX' : 'Otro';
+
+    res.json({
+      registros: result.recordset.length,
+      empresa, unidadNegocio: unNombre, unidadOperativa: uoNombre,
+      totalKm, totalHrs,
+      meta: meta ? { km: meta.metaKm, hrs: meta.metaHrs } : null,
+      pctKm: meta ? Math.round(totalKm / meta.metaKm * 100) : null,
+      pctHrs: meta ? Math.round(totalHrs / meta.metaHrs * 100) : null,
+      semanas,
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.post('/api/public/solicitud-vehiculo', async (req, res) => {
   try {
     if (!ensurePool(res)) return;
