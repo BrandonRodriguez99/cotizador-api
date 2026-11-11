@@ -6052,6 +6052,91 @@ app.get('/api/seguimiento-opt', autenticar, async (req, res) => {
       } catch (e) { console.log('Warn: km/hrs load failed:', e.message); }
     }
 
+    // 9. Batch-load promedioEvals (encargado weekly evaluations calificación average)
+    if (filtered.length > 0) {
+      try {
+        const mats = filtered.map(a => a.matricula).filter(Boolean);
+        const matList = mats.map(m => `'${m.replace(/'/g, "''")}'`).join(',');
+
+        // Find alumno-type questions to match responses to students
+        const alumnoQRes = await pool.request().query(`
+          SELECT p.PreguntaId, s.FormularioId
+          FROM dbo.FormPreguntas p
+          JOIN dbo.FormSecciones s ON s.SeccionId=p.SeccionId
+          WHERE p.TipoRespuesta='alumno'`);
+        const pregIds = alumnoQRes.recordset.map(q => q.PreguntaId);
+
+        if (pregIds.length > 0) {
+          // Get all encargado responses that reference these students
+          // Encargado = forms NOT in PortalCalendario (no calendar = encargado portal)
+          const evalRes = await pool.request().query(`
+            SELECT rv2.RespuestaId, rv2.Valor AS AlumnoVal,
+              r.FormularioId
+            FROM dbo.FormRespuestaValores rv2
+            JOIN dbo.FormRespuestas r ON r.RespuestaId=rv2.RespuestaId
+            WHERE rv2.PreguntaId IN (${pregIds.join(',')})
+              AND EXISTS (
+                SELECT 1 FROM dbo.PortalFormularios pf
+                JOIN dbo.Portales p ON p.PortalId=pf.PortalId
+                WHERE pf.FormularioId=r.FormularioId
+                  AND NOT EXISTS (SELECT 1 FROM dbo.PortalCalendario c WHERE c.PortalId=p.PortalId)
+              )`);
+
+          // Map respuestaId -> matricula
+          const respToMat = {};
+          for (const row of evalRes.recordset) {
+            try {
+              const parsed = JSON.parse(row.AlumnoVal);
+              if (parsed.matricula && mats.includes(parsed.matricula)) {
+                respToMat[row.RespuestaId] = parsed.matricula;
+              }
+            } catch {}
+          }
+
+          const respIds = Object.keys(respToMat).map(Number);
+          if (respIds.length > 0) {
+            // Get escala values for section scoring (seccionOrden >= 2)
+            const valRes = await pool.request().query(`
+              SELECT rv.RespuestaId, rv.Valor, p.TipoRespuesta, s.Orden AS SeccionOrden
+              FROM dbo.FormRespuestaValores rv
+              JOIN dbo.FormPreguntas p ON p.PreguntaId=rv.PreguntaId
+              JOIN dbo.FormSecciones s ON s.SeccionId=p.SeccionId
+              WHERE rv.RespuestaId IN (${respIds.join(',')})
+                AND p.TipoRespuesta='escala' AND s.Orden >= 2`);
+
+            // Group by respuestaId -> sections -> calificacion
+            const respCalif = {};
+            for (const v of valRes.recordset) {
+              if (!respCalif[v.RespuestaId]) respCalif[v.RespuestaId] = {};
+              const key = v.SeccionOrden;
+              if (!respCalif[v.RespuestaId][key]) respCalif[v.RespuestaId][key] = { suma: 0, count: 0 };
+              const num = parseFloat(v.Valor);
+              if (!isNaN(num)) { respCalif[v.RespuestaId][key].suma += num; respCalif[v.RespuestaId][key].count++; }
+            }
+
+            // Calculate calificacion per response, then average per student
+            const matCalifs = {};
+            for (const [rid, secs] of Object.entries(respCalif)) {
+              const mat = respToMat[Number(rid)];
+              if (!mat) continue;
+              const secArr = Object.values(secs).filter(s => s.count > 0);
+              if (secArr.length === 0) continue;
+              const calif = Math.round(secArr.reduce((sum, s) => sum + s.suma, 0) / secArr.length);
+              if (!matCalifs[mat]) matCalifs[mat] = [];
+              matCalifs[mat].push(calif);
+            }
+
+            for (const al of filtered) {
+              const califs = matCalifs[al.matricula];
+              al.promedioEvals = califs && califs.length > 0
+                ? Math.round(califs.reduce((s, c) => s + c, 0) / califs.length)
+                : null;
+            }
+          }
+        }
+      } catch (e) { console.log('Warn: promedioEvals load failed:', e.message); }
+    }
+
     res.json({ portales, alumnos: filtered });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
