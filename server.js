@@ -6477,13 +6477,62 @@ const METAS_KM_HRS = [
   { empresa: 'LARMEX', un: 'FORD', uo: 'CHIHUAHUA', metaKm: 16200, metaHrs: 240 },
 ];
 
+const normalize = s => (s || '').toUpperCase().trim().normalize('NFD').replace(/[̀-ͯ]/g, '');
+
+const UO_ALIASES = {
+  'ALA|INTERMODAL|INTERMODAL MONTERREY': 'IM Monterrey',
+  'ALA|INTERMODAL|INTERMODAL NVO LAREDO': 'IM Nuevo Laredo',
+  'ALA|CELAYA|OPERACION CELAYA': 'Operaciones Celaya',
+  'ALA|CUENTAS NACIONALES|CUENTAS NACIONALES 1': 'Cuentas Nacionales',
+  'ALA|IMPORT EXPORT|IMPORT EXPORT LAREDO': 'Import Export',
+  'ALA|IMPORT EXPORT|IE RUTA LARGA': 'Import Export',
+  'ALA|IMPORT EXPORT|IE RUTA SLP': 'Import Export',
+  'ALA|IMPORT EXPORT|IE CONDUCTORES': 'Import Export',
+  'ALA|RUTA CORTA|RUTA CORTA': 'Ruta Corta',
+  'ALA|TOYOTA|OPERACION TOYOTA': 'Toyota SLP',
+  'ALA|ALASA|ALA': 'Import Export',
+  'LARMEX|FORD SUR|CUAUTITLAN LOCAL': 'FORD SUR',
+  'LARMEX|FORD SUR|FORD VARIOS': 'FORD SUR',
+  'LARMEX|IMPORT/EXPORT|I/E RUTA LARGA': 'I/E RL',
+  'LARMEX|IMPORT/EXPORT|GERENCIA IMP/EXP': 'I/E RL',
+  'LARMEX|IMPORT-EXPORT|I/E RUTA CORTA': 'I/E RC',
+  'LARMEX|ACEROS|ACEROS RUTA CORTA': 'ACEROS SWI',
+  'LARMEX|LARMEX|LARMEX': 'NAC SWI',
+  'LARMEX|GM SILAO|SILAO LOCAL': 'GM SLP LOCAL',
+  'LARMEX|GM SILAO|COMPLEMENTARIAS GM SILAO': 'GM SLP LOCAL',
+  'LARMEX|NACIONAL|NAC QUERETARO': 'NAC SWI (QRO)',
+  'LARMEX|ODC SLP|ODC S.L.P SUR': 'NAC SWI',
+};
+
+const UN_ALIASES = {
+  'ALA|CELAYA': 'AUTOMOTRIZ',
+  'ALA|CUENTAS NACIONALES': 'AUTOMOTRIZ',
+  'ALA|IMPORT EXPORT': 'INTERNACIONAL',
+  'ALA|RUTA CORTA': 'INTERNACIONAL',
+  'ALA|TOYOTA': 'AUTOMOTRIZ',
+  'ALA|ALASA': 'INTERNACIONAL',
+  'ALA|INTERMODAL': 'INTERMODAL',
+  'LARMEX|FORD SUR': 'FORD',
+  'LARMEX|IMPORT/EXPORT': 'IMPORT-EXPORT',
+  'LARMEX|ACEROS': 'NACIONAL',
+  'LARMEX|LARMEX': 'NACIONAL',
+  'LARMEX|GM SILAO': 'GM',
+  'LARMEX|ODC SLP': 'NACIONAL',
+};
+
 function findMeta(empresaId, un, uo) {
   const empresa = empresaId === 1 ? 'ALA' : empresaId === 10 ? 'LARMEX' : null;
   if (!empresa) return null;
-  const unUp = (un || '').toUpperCase().trim();
-  const uoUp = (uo || '').toUpperCase().trim();
+  let unN = normalize(un), uoN = normalize(uo);
+  if (!unN && !uoN) return null;
+
+  const uoAlias = UO_ALIASES[`${empresa}|${unN}|${uoN}`];
+  if (uoAlias) uoN = normalize(uoAlias);
+  const unAlias = UN_ALIASES[`${empresa}|${unN}`];
+  if (unAlias) unN = normalize(unAlias);
+
   return METAS_KM_HRS.find(m =>
-    m.empresa === empresa && m.un.toUpperCase() === unUp && m.uo.toUpperCase() === uoUp
+    m.empresa === empresa && normalize(m.un) === unN && normalize(m.uo) === uoN
   ) || null;
 }
 
