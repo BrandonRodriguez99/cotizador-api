@@ -6017,14 +6017,19 @@ app.get('/api/seguimiento-opt', autenticar, async (req, res) => {
         const opIds = Object.values(matToOpId);
         if (opIds.length > 0) {
           const practRes = await poolUDAT.request().query(`
-            SELECT OperadorId,
-              SUM(ISNULL(KilometrajeFinal,0) - ISNULL(KilometrajeInicial,0)) AS TotalKm,
-              SUM(DATEDIFF(MINUTE, FechaHoraInicio, FechaHoraFin)) AS TotalMin,
-              COUNT(*) AS Registros,
-              MAX(NombreUnidadNegocio) AS UN, MAX(UnidadOperativa) AS UO, MAX(EmpresaId) AS EmpId
-            FROM dbo.PracticaTractorOPT
-            WHERE OperadorId IN (${opIds.join(',')}) AND (Eliminado = 0 OR Eliminado IS NULL)
-            GROUP BY OperadorId`);
+            SELECT t.OperadorId, t.TotalKm, t.TotalMin, t.Registros,
+              r.NombreUnidadNegocio AS UN, r.UnidadOperativa AS UO, r.EmpresaId AS EmpId
+            FROM (
+              SELECT OperadorId,
+                SUM(ISNULL(KilometrajeFinal,0) - ISNULL(KilometrajeInicial,0)) AS TotalKm,
+                SUM(DATEDIFF(MINUTE, FechaHoraInicio, FechaHoraFin)) AS TotalMin,
+                COUNT(*) AS Registros,
+                MAX(PracticaTractorOPTId) AS LastId
+              FROM dbo.PracticaTractorOPT
+              WHERE OperadorId IN (${opIds.join(',')}) AND (Eliminado = 0 OR Eliminado IS NULL)
+              GROUP BY OperadorId
+            ) t
+            INNER JOIN dbo.PracticaTractorOPT r ON r.PracticaTractorOPTId = t.LastId`);
           const opIdToData = {};
           for (const r of practRes.recordset) opIdToData[r.OperadorId] = r;
 
