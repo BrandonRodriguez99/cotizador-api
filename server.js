@@ -6443,13 +6443,20 @@ function findMeta(empresaId, un, uo) {
   ) || null;
 }
 
-app.get('/api/seguimiento-opt/:nombre/practicas', autenticar, async (req, res) => {
+app.get('/api/seguimiento-opt/:matricula/practicas', autenticar, async (req, res) => {
   try {
     if (!poolUDAT) return res.status(500).json({ error: 'Sin conexión a UDAT' });
-    const nombre = decodeURIComponent(req.params.nombre);
+    const matricula = decodeURIComponent(req.params.matricula);
+
+    const opRes = await poolUDAT.request()
+      .input('mat', sql.NVarChar(50), matricula)
+      .query(`SELECT OperadorId FROM dbo.Operador WHERE Matricula = @mat AND Eliminado = 0`);
+    if (!opRes.recordset.length) return res.json({ registros: 0, totalKm: 0, totalHrs: 0, semanas: [], meta: null });
+
+    const operadorId = opRes.recordset[0].OperadorId;
 
     const result = await poolUDAT.request()
-      .input('nombre', sql.NVarChar(300), nombre)
+      .input('opId', sql.Int, operadorId)
       .query(`
         SELECT Semana, EmpresaId, NombreUnidadNegocio, UnidadOperativa,
                ISNULL(KilometrajeFinal,0) - ISNULL(KilometrajeInicial,0) AS Km,
@@ -6457,7 +6464,7 @@ app.get('/api/seguimiento-opt/:nombre/practicas', autenticar, async (req, res) =
                FechaHoraInicio, FechaHoraFin, OperadorTutorId,
                GerenteUnidadNegocio, LiderUnidadOperativa
         FROM dbo.PracticaTractorOPT
-        WHERE NombreOPT = @nombre AND (Eliminado = 0 OR Eliminado IS NULL)
+        WHERE OperadorId = @opId AND (Eliminado = 0 OR Eliminado IS NULL)
         ORDER BY Semana, FechaHoraInicio`);
 
     if (!result.recordset.length) return res.json({ registros: 0, totalKm: 0, totalHrs: 0, semanas: [], meta: null });
