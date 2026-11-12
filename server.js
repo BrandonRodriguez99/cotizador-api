@@ -6043,8 +6043,11 @@ app.get('/api/seguimiento-opt', autenticar, async (req, res) => {
               al.metaHrs = meta ? meta.metaHrs : null;
               al.pctKm = meta ? Math.round(al.totalKm / meta.metaKm * 100) : null;
               al.pctHrs = meta ? Math.round(al.totalHrs / meta.metaHrs * 100) : null;
+              al.unidadNegocio = d.UN || null;
+              al.unidadOperativa = d.UO || null;
             } else {
               al.totalKm = 0; al.totalHrs = 0; al.metaKm = null; al.metaHrs = null; al.pctKm = null; al.pctHrs = null;
+              al.unidadNegocio = null; al.unidadOperativa = null;
             }
           }
         }
