@@ -1288,6 +1288,9 @@ sql
           IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.PortalCalendario') AND name='Perfil')
             ALTER TABLE dbo.PortalCalendario ADD Perfil NVARCHAR(200) NULL;
 
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.PortalCalendario') AND name='Empresa')
+            ALTER TABLE dbo.PortalCalendario ADD Empresa NVARCHAR(100) NULL;
+
           IF OBJECT_ID('dbo.FormPreguntas','U') IS NULL
           BEGIN
             CREATE TABLE dbo.FormPreguntas (
@@ -5659,8 +5662,9 @@ app.post('/api/portales', autenticar, async (req, res) => {
         .input('si', sql.Int, c.semanaInicio)
         .input('da', sql.Int, c.diasActiva || 7)
         .input('pf', sql.NVarChar(200), c.perfil || null)
+        .input('em', sql.NVarChar(100), c.empresa || null)
         .input('o', sql.Int, ci)
-        .query('INSERT INTO dbo.PortalCalendario(PortalId,FormularioId,SemanaInicio,DiasActiva,Perfil,Orden) VALUES(@pid,@fid,@si,@da,@pf,@o)');
+        .query('INSERT INTO dbo.PortalCalendario(PortalId,FormularioId,SemanaInicio,DiasActiva,Perfil,Empresa,Orden) VALUES(@pid,@fid,@si,@da,@pf,@em,@o)');
     }
     res.json({ PortalId: portalId });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -5698,8 +5702,9 @@ app.put('/api/portales/:id', autenticar, async (req, res) => {
           .input('si', sql.Int, c.semanaInicio || c.SemanaInicio)
           .input('da', sql.Int, c.diasActiva || c.DiasActiva || 7)
           .input('pf', sql.NVarChar(200), c.perfil || c.Perfil || null)
+          .input('em', sql.NVarChar(100), c.empresa || c.Empresa || null)
           .input('o', sql.Int, ci)
-          .query('INSERT INTO dbo.PortalCalendario(PortalId,FormularioId,SemanaInicio,DiasActiva,Perfil,Orden) VALUES(@pid,@fid,@si,@da,@pf,@o)');
+          .query('INSERT INTO dbo.PortalCalendario(PortalId,FormularioId,SemanaInicio,DiasActiva,Perfil,Empresa,Orden) VALUES(@pid,@fid,@si,@da,@pf,@em,@o)');
       }
     }
     res.json({ ok: true });
@@ -5939,12 +5944,14 @@ app.get('/api/seguimiento-opt', autenticar, async (req, res) => {
       const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
       const semanaActual = diffDays >= 0 ? Math.floor(diffDays / 7) + 1 : 0;
 
-      // Get applicable rules for this student (matching perfil)
+      // Get applicable rules for this student (matching perfil and empresa)
       const reglasAlumno = reglas.filter(r => {
         const portalOk = targetIds.includes(r.PortalId);
         const perfilOk = !r.Perfil || r.Perfil.trim() === '' ||
           r.Perfil.trim().toLowerCase() === (al.Perfil || '').trim().toLowerCase();
-        return portalOk && perfilOk;
+        const empresaOk = !r.Empresa || r.Empresa.trim() === '' ||
+          r.Empresa.trim().toLowerCase() === (al.Empresa || '').trim().toLowerCase();
+        return portalOk && perfilOk && empresaOk;
       });
 
       const encuestas = reglasAlumno.map(r => {
