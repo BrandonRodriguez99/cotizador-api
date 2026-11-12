@@ -6076,10 +6076,37 @@ app.get('/api/seguimiento-opt', autenticar, async (req, res) => {
       } catch (e) { console.log('Warn: km/hrs load failed:', e.message); }
     }
 
-    // 8b. Fallback UN + default meta for students without km data
+    // 8b. Map sUnidadNegocio from OperacionesUDAT to standard UN/UO names
+    const unOpsMap = {
+      '1': {
+        'INT-Import Export': { un: 'INTERNACIONAL', uo: 'Import Export' },
+        'INT-Ruta Corta': { un: 'INTERNACIONAL', uo: 'Ruta Corta' },
+        'INT-Cruces': { un: 'INTERNACIONAL', uo: 'Cruces' },
+        'Intermodal': { un: 'INTERMODAL', uo: null },
+        'Automotriz': { un: 'AUTOMOTRIZ', uo: null },
+        'AUT-Toyota': { un: 'AUTOMOTRIZ', uo: null },
+        'AUT-Op Celaya': { un: 'AUTOMOTRIZ', uo: 'Operaciones Celaya' },
+        'AUT-Cuentas Nacionales': { un: 'AUTOMOTRIZ', uo: 'Cuentas Nacionales' },
+      },
+      '10': {
+        'CE-Nacional': { un: 'NACIONAL', uo: null },
+        'CE-Aceros': { un: 'NACIONAL', uo: 'ACEROS SWI' },
+        'CE-I/E': { un: 'IMPORT-EXPORT', uo: null },
+        'CE-Intermodal': { un: 'INTERMODAL', uo: null },
+        'FORD': { un: 'FORD', uo: null },
+        'GM': { un: 'GM', uo: null },
+      },
+    };
     for (const al of filtered) {
       if (!al.unidadNegocio && al.unidadNegocioOps) {
-        al.unidadNegocio = al.unidadNegocioOps;
+        const empMap = unOpsMap[String(al.empresaId)];
+        const mapped = empMap ? empMap[al.unidadNegocioOps] : null;
+        if (mapped) {
+          al.unidadNegocio = mapped.un;
+          if (!al.unidadOperativa && mapped.uo) al.unidadOperativa = mapped.uo;
+        } else {
+          al.unidadNegocio = al.unidadNegocioOps;
+        }
       }
       if (al.metaKm == null && al.empresaId === 10) {
         al.metaKm = 16200;
