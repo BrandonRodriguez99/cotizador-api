@@ -5885,12 +5885,11 @@ app.get('/api/seguimiento-opt', autenticar, async (req, res) => {
     const formIds = [...new Set(reglas.map(r => r.FormularioId))];
     if (!formIds.length) return res.json({ portales, alumnos: [] });
 
-    // 5. Find alumno-type questions in those forms
+    // 5. Find ALL alumno-type questions (not filtered by form, since responses may reference older PreguntaIds)
     const alumnoQRes = await pool.request().query(`
-      SELECT p.PreguntaId, p.SeccionId, s.FormularioId
+      SELECT p.PreguntaId
       FROM dbo.FormPreguntas p
-      JOIN dbo.FormSecciones s ON s.SeccionId=p.SeccionId
-      WHERE p.TipoRespuesta='alumno' AND s.FormularioId IN (${formIds.join(',')})`);
+      WHERE p.TipoRespuesta='alumno'`);
     const alumnoPreguntas = alumnoQRes.recordset;
 
     // 6. Get all responses for these forms with their alumno field values
