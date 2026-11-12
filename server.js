@@ -6600,26 +6600,230 @@ app.get('/api/seguimiento-opt-alertas', autenticar, async (req, res) => {
         }
       }
 
-      // c) No evaluaciones at all
+      // c) No encuestas respondidas
       if (respIds.length === 0 && semanaActual >= 3) {
-        flags.push({ tipo: 'sin_datos', nivel: 'alto', mensaje: 'Sin ninguna evaluación registrada' });
+        flags.push({ tipo: 'sin_datos', nivel: 'alto', mensaje: 'Sin ninguna encuesta respondida' });
         riesgo += 25;
       }
 
       riesgo = Math.min(100, riesgo);
 
       if (flags.length > 0 || riesgo > 0) {
-        const nivelRiesgo = riesgo >= 50 ? 'alto' : riesgo >= 25 ? 'medio' : 'bajo';
         alertas.push({
           matricula: mat, nombre: al.Nombre, generacion: al.Generacion,
           perfil: al.Perfil, empresa: al.Empresa, etapa: al.Estatus || '',
-          semanaActual, riesgo, nivelRiesgo, flags,
+          semanaActual, riesgo, nivelRiesgo: '', flags,
           totalEvaluaciones: respIds.length,
           encuestasCompletadas: completadas, encuestasTotales: totalAplicables,
         });
       }
     }
 
+    // ── Phase 2: Load evaluaciones semanales + km/hrs and add to riesgo ──
+    const alertMats = alertas.map(a => a.matricula);
+    const allMats = alumnosRes.recordset.map(a => a.Matricula);
+
+    // 2a. Evaluaciones semanales promedio (reuse existing logic)
+    try {
+      const alumnoQRes2 = await pool.request().query(`
+        SELECT p.PreguntaId FROM dbo.FormPreguntas p WHERE p.TipoRespuesta='alumno'`);
+      const pregIds2 = alumnoQRes2.recordset.map(q => q.PreguntaId);
+      if (pregIds2.length > 0) {
+        const matList = allMats.map(m => `'${m.replace(/'/g, "''")}'`).join(',');
+        const evalRes = await pool.request().query(`
+          SELECT rv2.RespuestaId, rv2.Valor AS AlumnoVal, r.FormularioId
+          FROM dbo.FormRespuestaValores rv2
+          JOIN dbo.FormRespuestas r ON r.RespuestaId=rv2.RespuestaId
+          WHERE rv2.PreguntaId IN (${pregIds2.join(',')})
+            AND EXISTS (
+              SELECT 1 FROM dbo.PortalFormularios pf
+              JOIN dbo.Portales p ON p.PortalId=pf.PortalId
+              WHERE pf.FormularioId=r.FormularioId
+                AND NOT EXISTS (SELECT 1 FROM dbo.PortalCalendario c WHERE c.PortalId=p.PortalId)
+            )`);
+        const respToMat2 = {};
+        for (const row of evalRes.recordset) {
+          try { const p = JSON.parse(row.AlumnoVal); if (p.matricula && allMats.includes(p.matricula)) respToMat2[row.RespuestaId] = p.matricula; } catch {}
+        }
+        const respIds2 = Object.keys(respToMat2).map(Number);
+        if (respIds2.length > 0) {
+          const batchSz = 500;
+          const valAll = [];
+          for (let i = 0; i < respIds2.length; i += batchSz) {
+            const batch = respIds2.slice(i, i + batchSz);
+            const vr = await pool.request().query(`
+              SELECT rv.RespuestaId, rv.Valor, p.TipoRespuesta, s.Orden AS SeccionOrden
+              FROM dbo.FormRespuestaValores rv
+              JOIN dbo.FormPreguntas p ON p.PreguntaId=rv.PreguntaId
+              JOIN dbo.FormSecciones s ON s.SeccionId=p.SeccionId
+              WHERE rv.RespuestaId IN (${batch.join(',')}) AND p.TipoRespuesta='escala' AND s.Orden >= 2`);
+            valAll.push(...vr.recordset);
+          }
+          const respCalif = {};
+          for (const v of valAll) {
+            if (!respCalif[v.RespuestaId]) respCalif[v.RespuestaId] = {};
+            const key = v.SeccionOrden;
+            if (!respCalif[v.RespuestaId][key]) respCalif[v.RespuestaId][key] = { suma: 0, count: 0 };
+            const num = parseFloat(v.Valor);
+            if (!isNaN(num)) { respCalif[v.RespuestaId][key].suma += num; respCalif[v.RespuestaId][key].count++; }
+          }
+          const matCalifs = {};
+          for (const [rid, secs] of Object.entries(respCalif)) {
+            const mat = respToMat2[Number(rid)];
+            if (!mat) continue;
+            const secArr = Object.values(secs).filter(s => s.count > 0);
+            if (!secArr.length) continue;
+            const calif = Math.round(secArr.reduce((sum, s) => sum + s.suma, 0) / secArr.length);
+            if (!matCalifs[mat]) matCalifs[mat] = [];
+            matCalifs[mat].push(calif);
+          }
+          // Apply eval risk to existing alertas and create new ones
+          const alertaMap = {};
+          for (const a of alertas) alertaMap[a.matricula] = a;
+          for (const al of alumnosRes.recordset) {
+            const mat = al.Matricula;
+            const califs = matCalifs[mat];
+            const promEval = califs && califs.length ? Math.round(califs.reduce((s, c) => s + c, 0) / califs.length) : null;
+            let alerta = alertaMap[mat];
+            if (promEval != null && promEval < 80) {
+              if (!alerta) {
+                const egreso = new Date(al.FechaEgreso);
+                const semActual = Math.max(1, Math.floor((now - egreso) / 86400000 / 7) + 1);
+                alerta = { matricula: mat, nombre: al.Nombre, generacion: al.Generacion,
+                  perfil: al.Perfil, empresa: al.Empresa, etapa: al.Estatus || '',
+                  semanaActual: semActual, riesgo: 0, nivelRiesgo: '', flags: [],
+                  totalEvaluaciones: 0, encuestasCompletadas: 0, encuestasTotales: 0 };
+                alertas.push(alerta);
+                alertaMap[mat] = alerta;
+              }
+              if (promEval < 60) {
+                alerta.flags.push({ tipo: 'evaluacion', nivel: 'alto', mensaje: `Promedio evaluaciones semanales: ${promEval}%` });
+                alerta.riesgo += 20;
+              } else {
+                alerta.flags.push({ tipo: 'evaluacion', nivel: 'medio', mensaje: `Promedio evaluaciones semanales: ${promEval}%` });
+                alerta.riesgo += 10;
+              }
+            }
+            if (promEval == null) {
+              const egreso = new Date(al.FechaEgreso);
+              const semActual = Math.max(1, Math.floor((now - egreso) / 86400000 / 7) + 1);
+              if (semActual >= 3) {
+                if (!alerta) {
+                  alerta = { matricula: mat, nombre: al.Nombre, generacion: al.Generacion,
+                    perfil: al.Perfil, empresa: al.Empresa, etapa: al.Estatus || '',
+                    semanaActual: semActual, riesgo: 0, nivelRiesgo: '', flags: [],
+                    totalEvaluaciones: 0, encuestasCompletadas: 0, encuestasTotales: 0 };
+                  alertas.push(alerta);
+                  alertaMap[mat] = alerta;
+                }
+                alerta.flags.push({ tipo: 'evaluacion', nivel: 'medio', mensaje: 'Sin evaluaciones semanales registradas' });
+                alerta.riesgo += 10;
+              }
+            }
+          }
+        }
+      }
+    } catch (e) { console.log('Warn: alertas eval load failed:', e.message); }
+
+    // 2b. Km/Hrs progress vs expected
+    try {
+      if (poolUDAT) {
+        const matList = allMats.map(m => `'${m.replace(/'/g, "''")}'`).join(',');
+        const opRes = await poolUDAT.request().query(`
+          SELECT OperadorId, Matricula FROM dbo.Operador WHERE Matricula IN (${matList}) AND Eliminado = 0`);
+        const matToOpId = {};
+        for (const r of opRes.recordset) matToOpId[r.Matricula] = r.OperadorId;
+        const opIds = Object.values(matToOpId);
+        if (opIds.length > 0) {
+          const practRes = await poolUDAT.request().query(`
+            SELECT t.OperadorId, t.TotalKm, t.TotalMin, r.EmpresaId, r.NombreUnidadNegocio AS UN, r.UnidadOperativa AS UO
+            FROM (
+              SELECT OperadorId, SUM(ISNULL(KilometrajeFinal,0)-ISNULL(KilometrajeInicial,0)) AS TotalKm,
+                SUM(DATEDIFF(MINUTE,FechaHoraInicio,FechaHoraFin)) AS TotalMin, MAX(PracticaTractorOPTId) AS LastId
+              FROM dbo.PracticaTractorOPT WHERE OperadorId IN (${opIds.join(',')}) AND (Eliminado=0 OR Eliminado IS NULL)
+              GROUP BY OperadorId
+            ) t INNER JOIN dbo.PracticaTractorOPT r ON r.PracticaTractorOPTId=t.LastId`);
+          const opIdToData = {};
+          for (const r of practRes.recordset) opIdToData[r.OperadorId] = r;
+
+          const alertaMap2 = {};
+          for (const a of alertas) alertaMap2[a.matricula] = a;
+
+          for (const al of alumnosRes.recordset) {
+            const mat = al.Matricula;
+            const opId = matToOpId[mat];
+            const d = opId ? opIdToData[opId] : null;
+            if (!d) continue;
+            const totalKm = Math.max(0, d.TotalKm || 0);
+            const totalHrs = Math.round(Math.max(0, d.TotalMin || 0) / 60 * 10) / 10;
+            const empStr = al.Empresa;
+            const meta = findMeta(d.EmpresaId, d.UN, d.UO);
+            const metaKm = meta ? meta.metaKm : (empStr === 'LARMEX' ? 16200 : null);
+            const metaHrs = meta ? meta.metaHrs : (empStr === 'LARMEX' ? 240 : null);
+            if (!metaKm) continue;
+            const pctKm = Math.round(totalKm / metaKm * 100);
+            const pctHrs = Math.round(totalHrs / metaHrs * 100);
+            const egreso = new Date(al.FechaEgreso);
+            const semActual = Math.max(1, Math.floor((now - egreso) / 86400000 / 7) + 1);
+            // Expected progress: linear over 9 weeks OPT
+            const expectedPct = Math.min(100, Math.round(semActual / 9 * 100));
+            let alerta = alertaMap2[mat];
+            if (pctKm < expectedPct * 0.5) {
+              if (!alerta) {
+                alerta = { matricula: mat, nombre: al.Nombre, generacion: al.Generacion,
+                  perfil: al.Perfil, empresa: al.Empresa, etapa: al.Estatus || '',
+                  semanaActual: semActual, riesgo: 0, nivelRiesgo: '', flags: [],
+                  totalEvaluaciones: 0, encuestasCompletadas: 0, encuestasTotales: 0 };
+                alertas.push(alerta);
+                alertaMap2[mat] = alerta;
+              }
+              alerta.flags.push({ tipo: 'km', nivel: 'alto', mensaje: `Km: ${pctKm}% vs ${expectedPct}% esperado (${totalKm.toLocaleString()} / ${metaKm.toLocaleString()})` });
+              alerta.riesgo += 15;
+            } else if (pctKm < expectedPct * 0.75) {
+              if (!alerta) {
+                alerta = { matricula: mat, nombre: al.Nombre, generacion: al.Generacion,
+                  perfil: al.Perfil, empresa: al.Empresa, etapa: al.Estatus || '',
+                  semanaActual: semActual, riesgo: 0, nivelRiesgo: '', flags: [],
+                  totalEvaluaciones: 0, encuestasCompletadas: 0, encuestasTotales: 0 };
+                alertas.push(alerta);
+                alertaMap2[mat] = alerta;
+              }
+              alerta.flags.push({ tipo: 'km', nivel: 'medio', mensaje: `Km: ${pctKm}% vs ${expectedPct}% esperado` });
+              alerta.riesgo += 8;
+            }
+            if (pctHrs < expectedPct * 0.5) {
+              if (!alerta) {
+                alerta = { matricula: mat, nombre: al.Nombre, generacion: al.Generacion,
+                  perfil: al.Perfil, empresa: al.Empresa, etapa: al.Estatus || '',
+                  semanaActual: semActual, riesgo: 0, nivelRiesgo: '', flags: [],
+                  totalEvaluaciones: 0, encuestasCompletadas: 0, encuestasTotales: 0 };
+                alertas.push(alerta);
+                alertaMap2[mat] = alerta;
+              }
+              alerta.flags.push({ tipo: 'hrs', nivel: 'alto', mensaje: `Hrs: ${pctHrs}% vs ${expectedPct}% esperado (${totalHrs} / ${metaHrs})` });
+              alerta.riesgo += 15;
+            } else if (pctHrs < expectedPct * 0.75) {
+              if (!alerta) {
+                alerta = { matricula: mat, nombre: al.Nombre, generacion: al.Generacion,
+                  perfil: al.Perfil, empresa: al.Empresa, etapa: al.Estatus || '',
+                  semanaActual: semActual, riesgo: 0, nivelRiesgo: '', flags: [],
+                  totalEvaluaciones: 0, encuestasCompletadas: 0, encuestasTotales: 0 };
+                alertas.push(alerta);
+                alertaMap2[mat] = alerta;
+              }
+              alerta.flags.push({ tipo: 'hrs', nivel: 'medio', mensaje: `Hrs: ${pctHrs}% vs ${expectedPct}% esperado` });
+              alerta.riesgo += 8;
+            }
+          }
+        }
+      }
+    } catch (e) { console.log('Warn: alertas km/hrs load failed:', e.message); }
+
+    // Finalize riesgo levels
+    for (const a of alertas) {
+      a.riesgo = Math.min(100, a.riesgo);
+      a.nivelRiesgo = a.riesgo >= 50 ? 'alto' : a.riesgo >= 25 ? 'medio' : 'bajo';
+    }
     alertas.sort((a, b) => b.riesgo - a.riesgo);
     res.json(alertas);
   } catch (err) { res.status(500).json({ error: err.message }); }
