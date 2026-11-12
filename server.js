@@ -5883,7 +5883,8 @@ app.get('/api/seguimiento-opt', autenticar, async (req, res) => {
              sEstatus AS Estatus,
              iIdEmpresa,
              CASE iIdEmpresa WHEN 1 THEN 'ALA' WHEN 10 THEN 'LARMEX' ELSE 'Otro' END AS Empresa,
-             sUnidadNegocio AS UnidadNegocioOps
+             sUnidadNegocio AS UnidadNegocioOps,
+             sTelefono AS Telefono
       FROM dbo.OperacionesUDAT
       WHERE dFechaEgresoUDATReal IS NOT NULL
         AND dFechaEgresoUDATReal > '1901-01-01'
@@ -6008,6 +6009,7 @@ app.get('/api/seguimiento-opt', autenticar, async (req, res) => {
         encuestas,
         unidadNegocioOps: al.UnidadNegocioOps || null,
         empresaId: al.iIdEmpresa,
+        telefono: al.Telefono || null,
       };
     });
 
