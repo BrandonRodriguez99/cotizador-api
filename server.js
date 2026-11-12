@@ -5873,6 +5873,7 @@ app.get('/api/seguimiento-opt', autenticar, async (req, res) => {
              sCasaAsignada AS Perfil,
              dFechaEgresoUDATReal AS FechaEgreso,
              sEstatus AS Estatus,
+             iIdEmpresa,
              CASE iIdEmpresa WHEN 1 THEN 'ALA' WHEN 10 THEN 'LARMEX' ELSE 'Otro' END AS Empresa,
              sUnidadNegocio AS UnidadNegocioOps
       FROM dbo.OperacionesUDAT
@@ -5998,6 +5999,7 @@ app.get('/api/seguimiento-opt', autenticar, async (req, res) => {
         porcentaje: totalEncuestas ? Math.round((completadas / totalEncuestas) * 100) : 0,
         encuestas,
         unidadNegocioOps: al.UnidadNegocioOps || null,
+        empresaId: al.iIdEmpresa,
       };
     });
 
@@ -6057,10 +6059,16 @@ app.get('/api/seguimiento-opt', autenticar, async (req, res) => {
       } catch (e) { console.log('Warn: km/hrs load failed:', e.message); }
     }
 
-    // 8b. Fallback UN from OperacionesUDAT for students without km data
+    // 8b. Fallback UN + default meta for students without km data
     for (const al of filtered) {
       if (!al.unidadNegocio && al.unidadNegocioOps) {
         al.unidadNegocio = al.unidadNegocioOps;
+      }
+      if (al.metaKm == null && al.empresaId === 10) {
+        al.metaKm = 16200;
+        al.metaHrs = 240;
+        al.pctKm = al.totalKm ? Math.round(al.totalKm / 16200 * 100) : 0;
+        al.pctHrs = al.totalHrs ? Math.round(al.totalHrs / 240 * 100) : 0;
       }
     }
 
@@ -6149,7 +6157,7 @@ app.get('/api/seguimiento-opt', autenticar, async (req, res) => {
       } catch (e) { console.log('Warn: promedioEvals load failed:', e.message); }
     }
 
-    for (const al of filtered) delete al.unidadNegocioOps;
+    for (const al of filtered) { delete al.unidadNegocioOps; delete al.empresaId; }
     res.json({ portales, alumnos: filtered });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
