@@ -5951,7 +5951,7 @@ app.get('/api/seguimiento-opt', autenticar, async (req, res) => {
         const respondidaAlguna = respondidas.length > 0;
 
         let estado = 'pendiente';
-        if (respondida) {
+        if (respondida || respondidaAlguna) {
           estado = 'completada';
         } else if (diffDays >= diaFin) {
           estado = 'vencida';
@@ -5973,7 +5973,7 @@ app.get('/api/seguimiento-opt', autenticar, async (req, res) => {
           fechaRespuesta: respondida ? respondidas.find(f => {
             const d = Math.floor((new Date(f) - fechaEgreso) / (1000*60*60*24));
             return d >= diaInicio && d < diaFin;
-          }) : (respondidaAlguna ? respondidas[0] : null),
+          }) : (respondidaAlguna ? respondidas[respondidas.length - 1] : null),
         };
       });
 
