@@ -6382,7 +6382,7 @@ app.get('/api/seguimiento-opt-alertas', autenticar, async (req, res) => {
 
     // 1. Calendar rules
     const calRes = await pool.request().query(`
-      SELECT c.PortalId, c.FormularioId, c.SemanaInicio, c.DiasActiva, c.Perfil
+      SELECT c.PortalId, c.FormularioId, c.SemanaInicio, c.DiasActiva, c.Perfil, c.Empresa
       FROM dbo.PortalCalendario c`);
 
     // 2. Students in OPT only
@@ -6395,6 +6395,17 @@ app.get('/api/seguimiento-opt-alertas', autenticar, async (req, res) => {
       WHERE dFechaEgresoUDATReal IS NOT NULL AND dFechaEgresoUDATReal > '1901-01-01'
         AND sEstatus LIKE '%OPT%'
       ORDER BY sNombreCompleto`);
+
+    // 2b. Pre-calculate totalSemanasOPT per student
+    const semOPTMap = {};
+    for (const al of alumnosRes.recordset) {
+      const reglasAl = calRes.recordset.filter(r => {
+        const pOk = !r.Perfil || r.Perfil.trim() === '' || r.Perfil.trim().toLowerCase() === (al.Perfil || '').trim().toLowerCase();
+        const eOk = !r.Empresa || r.Empresa.trim() === '' || r.Empresa.trim().toLowerCase() === al.Empresa.toLowerCase();
+        return pOk && eOk;
+      });
+      semOPTMap[al.Matricula] = reglasAl.length > 0 ? Math.max(...reglasAl.map(r => Math.ceil((r.SemanaInicio * 7 + r.DiasActiva) / 7))) : 9;
+    }
 
     // 3. Load ALL questions with their options (to know the option order/severity)
     const pregRes = await pool.request().query(`
@@ -6473,7 +6484,12 @@ app.get('/api/seguimiento-opt-alertas', autenticar, async (req, res) => {
       const egreso = new Date(al.FechaEgreso);
       const diffDays = Math.floor((now - egreso) / 86400000);
       const semanaActual = Math.max(1, Math.floor(diffDays / 7) + 1);
-      const reglas = calRes.recordset.filter(r => (!r.Perfil || r.Perfil === al.Perfil) && r.SemanaInicio <= semanaActual);
+      const reglas = calRes.recordset.filter(r => {
+        const perfilOk = !r.Perfil || r.Perfil.trim() === '' || r.Perfil.trim().toLowerCase() === (al.Perfil || '').trim().toLowerCase();
+        const empresaOk = !r.Empresa || r.Empresa.trim() === '' || r.Empresa.trim().toLowerCase() === al.Empresa.toLowerCase();
+        return perfilOk && empresaOk && r.SemanaInicio <= semanaActual;
+      });
+      const totalSemanasOPT = semOPTMap[mat] || 9;
       const totalAplicables = reglas.length;
 
       const formRespondidos = new Set();
@@ -6612,7 +6628,7 @@ app.get('/api/seguimiento-opt-alertas', autenticar, async (req, res) => {
         alertas.push({
           matricula: mat, nombre: al.Nombre, generacion: al.Generacion,
           perfil: al.Perfil, empresa: al.Empresa, etapa: al.Estatus || '',
-          semanaActual, riesgo, nivelRiesgo: '', flags,
+          semanaActual, totalSemanasOPT, riesgo, nivelRiesgo: '', flags,
           totalEvaluaciones: respIds.length,
           encuestasCompletadas: completadas, encuestasTotales: totalAplicables,
         });
@@ -6691,7 +6707,7 @@ app.get('/api/seguimiento-opt-alertas', autenticar, async (req, res) => {
                 const semActual = Math.max(1, Math.floor((now - egreso) / 86400000 / 7) + 1);
                 alerta = { matricula: mat, nombre: al.Nombre, generacion: al.Generacion,
                   perfil: al.Perfil, empresa: al.Empresa, etapa: al.Estatus || '',
-                  semanaActual: semActual, riesgo: 0, nivelRiesgo: '', flags: [],
+                  semanaActual: semActual, totalSemanasOPT: semOPTMap[mat] || 9, riesgo: 0, nivelRiesgo: '', flags: [],
                   totalEvaluaciones: 0, encuestasCompletadas: 0, encuestasTotales: 0 };
                 alertas.push(alerta);
                 alertaMap[mat] = alerta;
@@ -6711,7 +6727,7 @@ app.get('/api/seguimiento-opt-alertas', autenticar, async (req, res) => {
                 if (!alerta) {
                   alerta = { matricula: mat, nombre: al.Nombre, generacion: al.Generacion,
                     perfil: al.Perfil, empresa: al.Empresa, etapa: al.Estatus || '',
-                    semanaActual: semActual, riesgo: 0, nivelRiesgo: '', flags: [],
+                    semanaActual: semActual, totalSemanasOPT: semOPTMap[mat] || 9, riesgo: 0, nivelRiesgo: '', flags: [],
                     totalEvaluaciones: 0, encuestasCompletadas: 0, encuestasTotales: 0 };
                   alertas.push(alerta);
                   alertaMap[mat] = alerta;
@@ -6765,52 +6781,29 @@ app.get('/api/seguimiento-opt-alertas', autenticar, async (req, res) => {
             const pctHrs = Math.round(totalHrs / metaHrs * 100);
             const egreso = new Date(al.FechaEgreso);
             const semActual = Math.max(1, Math.floor((now - egreso) / 86400000 / 7) + 1);
-            // Expected progress: linear over 9 weeks OPT
-            const expectedPct = Math.min(100, Math.round(semActual / 9 * 100));
             let alerta = alertaMap2[mat];
+            const semOPT = semOPTMap[mat] || 9;
+            const expectedPct = Math.min(100, Math.round(semActual / semOPT * 100));
+            const makeAlerta = () => ({ matricula: mat, nombre: al.Nombre, generacion: al.Generacion,
+              perfil: al.Perfil, empresa: al.Empresa, etapa: al.Estatus || '',
+              semanaActual: semActual, totalSemanasOPT: semOPT, riesgo: 0, nivelRiesgo: '', flags: [],
+              totalEvaluaciones: 0, encuestasCompletadas: 0, encuestasTotales: 0 });
+            const ensureAlerta = () => { if (!alerta) { alerta = makeAlerta(); alertas.push(alerta); alertaMap2[mat] = alerta; } };
             if (pctKm < expectedPct * 0.5) {
-              if (!alerta) {
-                alerta = { matricula: mat, nombre: al.Nombre, generacion: al.Generacion,
-                  perfil: al.Perfil, empresa: al.Empresa, etapa: al.Estatus || '',
-                  semanaActual: semActual, riesgo: 0, nivelRiesgo: '', flags: [],
-                  totalEvaluaciones: 0, encuestasCompletadas: 0, encuestasTotales: 0 };
-                alertas.push(alerta);
-                alertaMap2[mat] = alerta;
-              }
+              ensureAlerta();
               alerta.flags.push({ tipo: 'km', nivel: 'alto', mensaje: `Km: ${pctKm}% vs ${expectedPct}% esperado (${totalKm.toLocaleString()} / ${metaKm.toLocaleString()})` });
               alerta.riesgo += 15;
             } else if (pctKm < expectedPct * 0.75) {
-              if (!alerta) {
-                alerta = { matricula: mat, nombre: al.Nombre, generacion: al.Generacion,
-                  perfil: al.Perfil, empresa: al.Empresa, etapa: al.Estatus || '',
-                  semanaActual: semActual, riesgo: 0, nivelRiesgo: '', flags: [],
-                  totalEvaluaciones: 0, encuestasCompletadas: 0, encuestasTotales: 0 };
-                alertas.push(alerta);
-                alertaMap2[mat] = alerta;
-              }
+              ensureAlerta();
               alerta.flags.push({ tipo: 'km', nivel: 'medio', mensaje: `Km: ${pctKm}% vs ${expectedPct}% esperado` });
               alerta.riesgo += 8;
             }
             if (pctHrs < expectedPct * 0.5) {
-              if (!alerta) {
-                alerta = { matricula: mat, nombre: al.Nombre, generacion: al.Generacion,
-                  perfil: al.Perfil, empresa: al.Empresa, etapa: al.Estatus || '',
-                  semanaActual: semActual, riesgo: 0, nivelRiesgo: '', flags: [],
-                  totalEvaluaciones: 0, encuestasCompletadas: 0, encuestasTotales: 0 };
-                alertas.push(alerta);
-                alertaMap2[mat] = alerta;
-              }
+              ensureAlerta();
               alerta.flags.push({ tipo: 'hrs', nivel: 'alto', mensaje: `Hrs: ${pctHrs}% vs ${expectedPct}% esperado (${totalHrs} / ${metaHrs})` });
               alerta.riesgo += 15;
             } else if (pctHrs < expectedPct * 0.75) {
-              if (!alerta) {
-                alerta = { matricula: mat, nombre: al.Nombre, generacion: al.Generacion,
-                  perfil: al.Perfil, empresa: al.Empresa, etapa: al.Estatus || '',
-                  semanaActual: semActual, riesgo: 0, nivelRiesgo: '', flags: [],
-                  totalEvaluaciones: 0, encuestasCompletadas: 0, encuestasTotales: 0 };
-                alertas.push(alerta);
-                alertaMap2[mat] = alerta;
-              }
+              ensureAlerta();
               alerta.flags.push({ tipo: 'hrs', nivel: 'medio', mensaje: `Hrs: ${pctHrs}% vs ${expectedPct}% esperado` });
               alerta.riesgo += 8;
             }
