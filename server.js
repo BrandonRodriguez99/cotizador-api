@@ -927,6 +927,14 @@ sql
           `);
         }
 
+        // ── Migración: rol mentor_lider (mismos permisos vehiculos que encargado_vehiculos) ──
+        for (const vista of ['inicio', 'vehiculos', 'seguridad']) {
+          await pool.request().query(`
+            IF NOT EXISTS (SELECT 1 FROM dbo.PermisosRol WHERE Rol='mentor_lider' AND Vista='${vista}')
+              INSERT INTO dbo.PermisosRol (Rol, Vista) VALUES ('mentor_lider','${vista}')
+          `);
+        }
+
         // ── Migración: ChampionId en CincoS_Areas ──
         await pool.request().query(`
           IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.CincoS_Areas') AND name='ChampionId')
@@ -1985,9 +1993,9 @@ function soloAdmin(req, res, next) {
 }
 
 function soloEncargadoVehiculos(req, res, next) {
-  const rolesPermitidos = ['admin', 'encargado_vehiculos'];
+  const rolesPermitidos = ['admin', 'encargado_vehiculos', 'mentor_lider'];
   if (!req.usuario || !rolesPermitidos.includes(req.usuario.rol)) {
-    return res.status(403).json({ error: 'Solo el encargado de vehículos puede realizar esta acción' });
+    return res.status(403).json({ error: 'Solo el encargado de vehículos o mentor líder puede realizar esta acción' });
   }
   next();
 }
@@ -5233,7 +5241,7 @@ app.post('/api/seguridad/ordenes-vehiculo', autenticar, async (req, res) => {
             .query("SELECT Marca+' '+Modelo+' ('+Placa+')' AS N FROM Vehiculos WHERE VehiculoId=@vid");
           if (vr.recordset.length) vehiculoNombre = vr.recordset[0].N;
         }
-        const encargados = await getEmailsPorRoles(['encargado_vehiculos']);
+        const encargados = await getEmailsPorRoles(['encargado_vehiculos', 'mentor_lider']);
         console.log(`📧 Solicitud vehículo ${folio}: ${encargados.length} destinatarios → ${JSON.stringify(encargados)}`);
         if (encargados.length)
           sendMail(encargados, `Nueva Solicitud de Vehículo — ${folio}`,
@@ -6790,7 +6798,7 @@ app.post('/api/public/solicitud-vehiculo', async (req, res) => {
             .query("SELECT Marca+' '+Modelo+' ('+Placa+')' AS N FROM Vehiculos WHERE VehiculoId=@vid");
           if (vr.recordset.length) vehiculoNombre = vr.recordset[0].N;
         }
-        const encargados = await getEmailsPorRoles(['encargado_vehiculos']);
+        const encargados = await getEmailsPorRoles(['encargado_vehiculos', 'mentor_lider']);
         console.log(`📧 Solicitud vehículo (pública) ${folio}: ${encargados.length} destinatarios → ${JSON.stringify(encargados)}`);
         if (encargados.length)
           sendMail(encargados, `Nueva Solicitud de Vehículo — ${folio}`,
