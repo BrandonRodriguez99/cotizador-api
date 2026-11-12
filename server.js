@@ -5873,7 +5873,8 @@ app.get('/api/seguimiento-opt', autenticar, async (req, res) => {
              sCasaAsignada AS Perfil,
              dFechaEgresoUDATReal AS FechaEgreso,
              sEstatus AS Estatus,
-             CASE iIdEmpresa WHEN 1 THEN 'ALA' WHEN 10 THEN 'LARMEX' ELSE 'Otro' END AS Empresa
+             CASE iIdEmpresa WHEN 1 THEN 'ALA' WHEN 10 THEN 'LARMEX' ELSE 'Otro' END AS Empresa,
+             sUnidadNegocio AS UnidadNegocioOps
       FROM dbo.OperacionesUDAT
       WHERE dFechaEgresoUDATReal IS NOT NULL
         AND dFechaEgresoUDATReal > '1901-01-01'
@@ -5996,6 +5997,7 @@ app.get('/api/seguimiento-opt', autenticar, async (req, res) => {
         activas,
         porcentaje: totalEncuestas ? Math.round((completadas / totalEncuestas) * 100) : 0,
         encuestas,
+        unidadNegocioOps: al.UnidadNegocioOps || null,
       };
     });
 
@@ -6047,11 +6049,19 @@ app.get('/api/seguimiento-opt', autenticar, async (req, res) => {
               al.unidadOperativa = meta ? meta.uo : (d.UO || null);
             } else {
               al.totalKm = 0; al.totalHrs = 0; al.metaKm = null; al.metaHrs = null; al.pctKm = null; al.pctHrs = null;
-              al.unidadNegocio = null; al.unidadOperativa = null;
+              al.unidadNegocio = al.unidadNegocioOps || null;
+              al.unidadOperativa = null;
             }
           }
         }
       } catch (e) { console.log('Warn: km/hrs load failed:', e.message); }
+    }
+
+    // 8b. Fallback UN from OperacionesUDAT for students without km data
+    for (const al of filtered) {
+      if (!al.unidadNegocio && al.unidadNegocioOps) {
+        al.unidadNegocio = al.unidadNegocioOps;
+      }
     }
 
     // 9. Batch-load promedioEvals (encargado weekly evaluations calificación average)
@@ -6139,6 +6149,7 @@ app.get('/api/seguimiento-opt', autenticar, async (req, res) => {
       } catch (e) { console.log('Warn: promedioEvals load failed:', e.message); }
     }
 
+    for (const al of filtered) delete al.unidadNegocioOps;
     res.json({ portales, alumnos: filtered });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
