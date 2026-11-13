@@ -6037,13 +6037,15 @@ app.get('/api/seguimiento-opt', autenticar, async (req, res) => {
         const opIds = Object.values(matToOpId);
         if (opIds.length > 0) {
           const practRes = await poolUDAT.request().query(`
-            SELECT t.OperadorId, t.TotalKm, t.TotalMin, t.Registros,
+            SELECT t.OperadorId, t.TotalKm, t.TotalMin, t.Registros, t.UltimaFecha, t.DiasConducidos,
               r.NombreUnidadNegocio AS UN, r.UnidadOperativa AS UO, r.EmpresaId AS EmpId
             FROM (
               SELECT OperadorId,
                 SUM(ISNULL(KilometrajeFinal,0) - ISNULL(KilometrajeInicial,0)) AS TotalKm,
                 SUM(DATEDIFF(MINUTE, FechaHoraInicio, FechaHoraFin)) AS TotalMin,
                 COUNT(*) AS Registros,
+                MAX(FechaHoraInicio) AS UltimaFecha,
+                COUNT(DISTINCT CAST(FechaHoraInicio AS DATE)) AS DiasConducidos,
                 MAX(PracticaTractorOPTId) AS LastId
               FROM dbo.PracticaTractorOPT
               WHERE OperadorId IN (${opIds.join(',')}) AND (Eliminado = 0 OR Eliminado IS NULL)
@@ -6066,10 +6068,14 @@ app.get('/api/seguimiento-opt', autenticar, async (req, res) => {
               al.pctHrs = meta ? Math.round(al.totalHrs / meta.metaHrs * 100) : null;
               al.unidadNegocio = meta ? meta.un : (d.UN || null);
               al.unidadOperativa = meta ? meta.uo : (d.UO || null);
+              al.ultimaFechaConduccion = d.UltimaFecha || null;
+              al.diasConducidos = d.DiasConducidos || 0;
             } else {
               al.totalKm = 0; al.totalHrs = 0; al.metaKm = null; al.metaHrs = null; al.pctKm = null; al.pctHrs = null;
               al.unidadNegocio = al.unidadNegocioOps || null;
               al.unidadOperativa = null;
+              al.ultimaFechaConduccion = null;
+              al.diasConducidos = 0;
             }
           }
         }
