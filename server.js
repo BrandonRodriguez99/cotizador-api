@@ -1251,6 +1251,9 @@ sql
           IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.FormSecciones') AND name='Instrucciones')
             ALTER TABLE dbo.FormSecciones ADD Instrucciones NVARCHAR(1000) NULL;
 
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.Formularios') AND name='VisibleEnApp')
+            ALTER TABLE dbo.Formularios ADD VisibleEnApp BIT NOT NULL DEFAULT 1;
+
           IF OBJECT_ID('dbo.Portales','U') IS NULL
           BEGIN
             CREATE TABLE dbo.Portales (
@@ -8434,7 +8437,7 @@ app.get('/api/formularios', autenticar, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
     const r = await pool.request().query(
-      `SELECT FormularioId, Nombre, Descripcion, Activo, FechaCreacion FROM dbo.Formularios ORDER BY FechaCreacion DESC`
+      `SELECT FormularioId, Nombre, Descripcion, Activo, VisibleEnApp, FechaCreacion FROM dbo.Formularios ORDER BY FechaCreacion DESC`
     );
     res.json(r.recordset);
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -8445,7 +8448,7 @@ app.get('/api/formularios/activos', autenticar, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
     const r = await pool.request().query(
-      `SELECT FormularioId, Nombre, Descripcion FROM dbo.Formularios WHERE Activo=1 ORDER BY Nombre`
+      `SELECT FormularioId, Nombre, Descripcion FROM dbo.Formularios WHERE Activo=1 AND VisibleEnApp=1 ORDER BY Nombre`
     );
     res.json(r.recordset);
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -8651,6 +8654,20 @@ app.patch('/api/formularios/:id/activo', autenticar, async (req, res) => {
       .input('id', sql.Int, Number(req.params.id))
       .input('a', sql.Bit, activo ? 1 : 0)
       .query(`UPDATE dbo.Formularios SET Activo=@a,FechaActualizacion=SYSUTCDATETIME() WHERE FormularioId=@id`);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// PATCH /api/formularios/:id/visible-app — toggle visibilidad en app movil (admin)
+app.patch('/api/formularios/:id/visible-app', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    if (req.usuario.rol !== 'admin') return res.status(403).json({ error: 'Solo admin' });
+    const { visibleEnApp } = req.body;
+    await pool.request()
+      .input('id', sql.Int, Number(req.params.id))
+      .input('v', sql.Bit, visibleEnApp ? 1 : 0)
+      .query(`UPDATE dbo.Formularios SET VisibleEnApp=@v,FechaActualizacion=SYSUTCDATETIME() WHERE FormularioId=@id`);
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
