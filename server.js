@@ -9635,7 +9635,9 @@ function calcularAccionRecomendada(clasificacion, frecuencia, estado) {
 app.get('/api/cincos/proyectos', autenticar, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
-    const r = await pool.request().query(`SELECT * FROM CincoS_Proyectos WHERE Activo=1 ORDER BY FechaCreacion DESC`);
+    const todos = req.query.todos === '1';
+    const where = todos ? '1=1' : 'Activo=1';
+    const r = await pool.request().query(`SELECT * FROM CincoS_Proyectos WHERE ${where} ORDER BY FechaCreacion DESC`);
     res.json(r.recordset);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -9795,6 +9797,33 @@ app.put('/api/cincos/proyectos/:id', autenticar, async (req, res) => {
         }
       }
     }
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Activar/Desactivar proyecto ──
+app.patch('/api/cincos/proyectos/:id/toggle', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const id = parseInt(req.params.id);
+    const r = await pool.request().input('id', sql.Int, id)
+      .query(`UPDATE CincoS_Proyectos SET Activo = CASE WHEN Activo=1 THEN 0 ELSE 1 END OUTPUT INSERTED.Activo WHERE ProyectoId=@id`);
+    if (!r.recordset.length) return res.status(404).json({ error: 'Proyecto no encontrado' });
+    res.json({ ok: true, activo: r.recordset[0].Activo });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Eliminar proyecto (soft-delete completo) ──
+app.delete('/api/cincos/proyectos/:id', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const id = parseInt(req.params.id);
+    await pool.request().input('id', sql.Int, id)
+      .query(`UPDATE CincoS_Proyectos SET Activo=0 WHERE ProyectoId=@id`);
+    await pool.request().input('id', sql.Int, id)
+      .query(`UPDATE CincoS_Terminales SET Activo=0 WHERE ProyectoId=@id`);
+    await pool.request().input('id', sql.Int, id)
+      .query(`UPDATE a SET a.Activo=0 FROM CincoS_Areas a JOIN CincoS_Terminales t ON a.TerminalId=t.TerminalId WHERE t.ProyectoId=@id`);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
