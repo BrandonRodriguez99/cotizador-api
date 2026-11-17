@@ -5498,6 +5498,22 @@ app.post('/api/upload/foto-vehiculo', autenticar, async (req, res) => {
   }
 });
 
+app.post('/api/upload/foto-academia', autenticar, async (req, res) => {
+  try {
+    const { base64 } = req.body;
+    if (!base64) return res.status(400).json({ error: 'No se recibió imagen' });
+    const result = await cloudinary.uploader.upload(base64, {
+      folder: 'academia',
+      resource_type: 'image',
+      transformation: [{ width: 800, height: 400, crop: 'fill', quality: 'auto' }],
+    });
+    res.json({ url: result.secure_url });
+  } catch (err) {
+    console.log('❌ Error Cloudinary academia:', err.message);
+    res.status(500).json({ error: err.message || 'No se pudo subir la imagen' });
+  }
+});
+
 app.post('/api/upload/foto-rondin', autenticar, async (req, res) => {
   try {
     const { base64 } = req.body;
