@@ -5502,10 +5502,7 @@ app.post('/api/upload/foto-academia', autenticar, async (req, res) => {
   try {
     const { base64 } = req.body;
     if (!base64) return res.status(400).json({ error: 'No se recibió imagen' });
-    const result = await cloudinary.uploader.upload(base64, {
-      folder: 'academia',
-      resource_type: 'image',
-    });
+    const result = await cloudinary.uploader.upload(base64);
     res.json({ url: result.secure_url });
   } catch (err) {
     console.log('❌ Error Cloudinary academia:', err.message);
