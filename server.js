@@ -8864,7 +8864,7 @@ app.get('/api/academia/cursos/:id', autenticar, async (req, res) => {
 app.post('/api/academia/cursos', autenticar, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
-    const { Nombre, Descripcion, Instructor, Modalidad, Ubicacion, Capacidad, PorcentajeMinAsistencia, Generacion, HorasPorSesion, TipoCurso, sesiones } = req.body;
+    const { Nombre, Descripcion, Instructor, Modalidad, Ubicacion, Capacidad, PorcentajeMinAsistencia, Generacion, HorasPorSesion, TipoCurso, ImagenURL, sesiones } = req.body;
     const rCurso = await pool.request()
       .input('Nombre', sql.NVarChar, Nombre)
       .input('Descripcion', sql.NVarChar, Descripcion || null)
@@ -8876,10 +8876,11 @@ app.post('/api/academia/cursos', autenticar, async (req, res) => {
       .input('Generacion', sql.NVarChar, Generacion || null)
       .input('HorasPorSesion', sql.Decimal(5,1), HorasPorSesion != null ? Number(HorasPorSesion) : null)
       .input('TipoCurso', sql.NVarChar, TipoCurso || null)
+      .input('ImagenURL', sql.NVarChar, ImagenURL || null)
       .input('CreadoPor', sql.NVarChar, req.usuario?.nombre || null)
-      .query(`INSERT INTO AcademiaCursos (Nombre, Descripcion, Instructor, Modalidad, Ubicacion, Capacidad, PorcentajeMinAsistencia, Generacion, HorasPorSesion, TipoCurso, CreadoPor)
+      .query(`INSERT INTO AcademiaCursos (Nombre, Descripcion, Instructor, Modalidad, Ubicacion, Capacidad, PorcentajeMinAsistencia, Generacion, HorasPorSesion, TipoCurso, ImagenURL, CreadoPor)
               OUTPUT INSERTED.*
-              VALUES (@Nombre, @Descripcion, @Instructor, @Modalidad, @Ubicacion, @Capacidad, @PctMin, @Generacion, @HorasPorSesion, @TipoCurso, @CreadoPor)`);
+              VALUES (@Nombre, @Descripcion, @Instructor, @Modalidad, @Ubicacion, @Capacidad, @PctMin, @Generacion, @HorasPorSesion, @TipoCurso, @ImagenURL, @CreadoPor)`);
     const curso = rCurso.recordset[0];
     if (Array.isArray(sesiones) && sesiones.length > 0) {
       for (let i = 0; i < sesiones.length; i++) {
@@ -8902,7 +8903,7 @@ app.post('/api/academia/cursos', autenticar, async (req, res) => {
 app.put('/api/academia/cursos/:id', autenticar, async (req, res) => {
   try {
     if (!ensurePool(res)) return;
-    const { Nombre, Descripcion, Instructor, Modalidad, Ubicacion, Capacidad, Estado, PorcentajeMinAsistencia, Generacion, HorasPorSesion, TipoCurso, Habilitado } = req.body;
+    const { Nombre, Descripcion, Instructor, Modalidad, Ubicacion, Capacidad, Estado, PorcentajeMinAsistencia, Generacion, HorasPorSesion, TipoCurso, Habilitado, ImagenURL } = req.body;
     await pool.request()
       .input('id', sql.Int, req.params.id)
       .input('Nombre', sql.NVarChar, Nombre)
@@ -8917,10 +8918,11 @@ app.put('/api/academia/cursos/:id', autenticar, async (req, res) => {
       .input('HorasPorSesion', sql.Decimal(5,1), HorasPorSesion != null ? Number(HorasPorSesion) : null)
       .input('TipoCurso', sql.NVarChar, TipoCurso || null)
       .input('Habilitado', sql.Bit, Habilitado != null ? (Habilitado ? 1 : 0) : 1)
+      .input('ImagenURL', sql.NVarChar, ImagenURL || null)
       .query(`UPDATE AcademiaCursos SET Nombre=@Nombre, Descripcion=@Descripcion, Instructor=@Instructor,
               Modalidad=@Modalidad, Ubicacion=@Ubicacion, Capacidad=@Capacidad, Estado=@Estado,
               PorcentajeMinAsistencia=@PctMin, Generacion=@Generacion, HorasPorSesion=@HorasPorSesion,
-              TipoCurso=@TipoCurso, Habilitado=@Habilitado
+              TipoCurso=@TipoCurso, Habilitado=@Habilitado, ImagenURL=@ImagenURL
               WHERE CursoAcademiaId=@id`);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
