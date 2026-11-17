@@ -9489,6 +9489,84 @@ app.get('/api/academia/calendario', autenticar, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Portal público: cursos disponibles para auto-inscripción ──
+app.get('/api/academia/cursos-publicos', async (req, res) => {
+  try {
+    if (!pool) return res.status(500).json({ error: 'No hay conexión SQL' });
+    const r = await pool.request().query(`
+      SELECT c.CursoAcademiaId, c.Nombre, c.Descripcion, c.Instructor, c.Modalidad,
+             c.Ubicacion, c.Capacidad, c.Estado, c.Generacion, c.HorasPorSesion, c.TipoCurso,
+             (SELECT COUNT(*) FROM AcademiaInscripciones i WHERE i.CursoAcademiaId=c.CursoAcademiaId AND i.Activo=1) AS Inscritos,
+             (SELECT COUNT(*) FROM AcademiaSesiones s WHERE s.CursoAcademiaId=c.CursoAcademiaId) AS TotalSesiones,
+             (SELECT MIN(Fecha) FROM AcademiaSesiones s WHERE s.CursoAcademiaId=c.CursoAcademiaId) AS FechaInicio,
+             (SELECT MAX(Fecha) FROM AcademiaSesiones s WHERE s.CursoAcademiaId=c.CursoAcademiaId) AS FechaFin
+      FROM AcademiaCursos c
+      WHERE c.Habilitado=1 AND c.Estado='Activo'
+      ORDER BY c.FechaCreacion DESC
+    `);
+    res.json(r.recordset);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/academia/auto-inscripcion', async (req, res) => {
+  try {
+    if (!pool) return res.status(500).json({ error: 'No hay conexión SQL' });
+    const { CursoAcademiaId, NumeroEmpleado } = req.body;
+    if (!CursoAcademiaId || !NumeroEmpleado) return res.status(400).json({ error: 'Faltan datos' });
+
+    const rCurso = await pool.request()
+      .input('id', sql.Int, CursoAcademiaId)
+      .query(`SELECT c.*, (SELECT COUNT(*) FROM AcademiaInscripciones WHERE CursoAcademiaId=@id AND Activo=1) AS Inscritos FROM AcademiaCursos c WHERE c.CursoAcademiaId=@id`);
+    const curso = rCurso.recordset[0];
+    if (!curso) return res.status(404).json({ error: 'Curso no encontrado' });
+    if (!curso.Habilitado || curso.Estado !== 'Activo') return res.status(400).json({ error: 'Este curso no está disponible' });
+    if (curso.Inscritos >= curso.Capacidad) return res.status(400).json({ error: 'No hay lugares disponibles' });
+
+    const rExiste = await pool.request()
+      .input('cid', sql.Int, CursoAcademiaId)
+      .input('num', sql.NVarChar, NumeroEmpleado)
+      .query(`SELECT InscripcionId FROM AcademiaInscripciones WHERE CursoAcademiaId=@cid AND NumeroEmpleado=@num AND Activo=1`);
+    if (rExiste.recordset.length > 0) return res.status(400).json({ error: 'Ya estás inscrito en este curso' });
+
+    const rEmp = await pool.request()
+      .input('num', sql.NVarChar, NumeroEmpleado)
+      .query(`SELECT TOP 1 Nombre + ' ' + ISNULL(Paterno,'') + ' ' + ISNULL(Materno,'') AS NombreCompleto,
+                     NumeroEmpleado, Correo,
+                     CASE iIdEmpresa WHEN 1 THEN 'UDAT' WHEN 2 THEN 'UCOT' WHEN 3 THEN 'ULOG' WHEN 4 THEN 'DRIV' ELSE 'Otra' END AS Empresa,
+                     Terminal, Plaza, Area
+              FROM Empleados WHERE NumeroEmpleado=@num AND Estatus='A'`);
+    const emp = rEmp.recordset[0];
+    if (!emp) return res.status(404).json({ error: 'Número de empleado no encontrado o inactivo' });
+
+    const rIns = await pool.request()
+      .input('CursoId', sql.Int, CursoAcademiaId)
+      .input('NumEmp', sql.NVarChar, emp.NumeroEmpleado)
+      .input('Nombre', sql.NVarChar, emp.NombreCompleto.trim())
+      .input('Empresa', sql.NVarChar, emp.Empresa)
+      .input('Correo', sql.NVarChar, emp.Correo || null)
+      .input('Terminal', sql.NVarChar, emp.Terminal || null)
+      .input('Plaza', sql.NVarChar, emp.Plaza || null)
+      .input('Area', sql.NVarChar, emp.Area || null)
+      .input('InscritoPor', sql.NVarChar, 'Auto-inscripción')
+      .query(`INSERT INTO AcademiaInscripciones (CursoAcademiaId, NumeroEmpleado, NombreCompleto, Empresa, Correo, Terminal, Plaza, Area, InscritoPor)
+              OUTPUT INSERTED.*
+              VALUES (@CursoId, @NumEmp, @Nombre, @Empresa, @Correo, @Terminal, @Plaza, @Area, @InscritoPor)`);
+
+    const inscripcion = rIns.recordset[0];
+
+    if (emp.Correo) {
+      const rSes = await pool.request()
+        .input('cid', sql.Int, CursoAcademiaId)
+        .query(`SELECT * FROM AcademiaSesiones WHERE CursoAcademiaId=@cid ORDER BY NumeroSesion`);
+      if (rSes.recordset.length > 0) {
+        enviarInvitacionCurso(emp.Correo, curso.Nombre, curso.Generacion, rSes.recordset, curso.Instructor, curso.Ubicacion);
+      }
+    }
+
+    res.json({ ok: true, nombre: emp.NombreCompleto.trim(), curso: curso.Nombre });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.post('/api/academia/asistencia-qr', async (req, res) => {
   try {
     if (!pool) return res.status(500).json({ error: 'No hay conexión SQL' });
