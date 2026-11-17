@@ -5505,7 +5505,6 @@ app.post('/api/upload/foto-academia', autenticar, async (req, res) => {
     const result = await cloudinary.uploader.upload(base64, {
       folder: 'academia',
       resource_type: 'image',
-      transformation: [{ width: 800, height: 400, crop: 'fill', quality: 'auto' }],
     });
     res.json({ url: result.secure_url });
   } catch (err) {
