@@ -20,6 +20,13 @@ cloudinary.config({
   api_secret:  process.env.CLOUDINARY_API_SECRET  || "EzH_SCIZtJm9t902Wopf8lwwjOc",
 });
 
+// Crear upload preset unsigned para academia (una sola vez)
+cloudinary.api.upload_preset('academia_unsigned').catch(() => {
+  cloudinary.api.create_upload_preset({ name: 'academia_unsigned', unsigned: true, folder: 'academia' })
+    .then(() => console.log('✅ Cloudinary preset "academia_unsigned" creado'))
+    .catch(err => console.log('⚠️ Cloudinary preset:', err.message))
+});
+
 const app = express();
 const JWT_SECRET = process.env.JWT_SECRET || "udat-cotizador-secret-2024";
 
