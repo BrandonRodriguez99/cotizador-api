@@ -20,12 +20,6 @@ cloudinary.config({
   api_secret:  process.env.CLOUDINARY_API_SECRET  || "EzH_SCIZtJm9t902Wopf8lwwjOc",
 });
 
-// Crear upload preset unsigned para academia (una sola vez)
-cloudinary.api.upload_preset('academia_unsigned').catch(() => {
-  cloudinary.api.create_upload_preset({ name: 'academia_unsigned', unsigned: true, folder: 'academia' })
-    .then(() => console.log('✅ Cloudinary preset "academia_unsigned" creado'))
-    .catch(err => console.log('⚠️ Cloudinary preset:', err.message))
-});
 
 const app = express();
 const JWT_SECRET = process.env.JWT_SECRET || "udat-cotizador-secret-2024";
@@ -5505,20 +5499,6 @@ app.post('/api/upload/foto-vehiculo', autenticar, async (req, res) => {
   }
 });
 
-app.post('/api/upload/foto-academia', autenticar, async (req, res) => {
-  try {
-    const { base64 } = req.body;
-    if (!base64) return res.status(400).json({ error: 'No se recibió imagen' });
-    const result = await cloudinary.uploader.upload(base64, {
-      folder: 'vehiculos',
-      resource_type: 'image',
-    });
-    res.json({ url: result.secure_url });
-  } catch (err) {
-    console.log('❌ Error Cloudinary academia:', err.message);
-    res.status(500).json({ error: err.message || 'No se pudo subir la imagen' });
-  }
-});
 
 app.post('/api/upload/foto-rondin', autenticar, async (req, res) => {
   try {
