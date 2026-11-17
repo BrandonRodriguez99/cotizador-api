@@ -5983,7 +5983,7 @@ app.get('/api/seguimiento-opt', autenticar, async (req, res) => {
 
         return {
           formularioId: r.FormularioId,
-          formularioNombre: r.FormularioNombre.replace(/–\s*Semana\s*\d+/i, `– Semana ${r.SemanaInicio}`),
+          formularioNombre: r.FormularioNombre,
           semanaInicio: r.SemanaInicio,
           diasActiva: r.DiasActiva,
           perfil: r.Perfil,
