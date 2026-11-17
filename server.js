@@ -1109,6 +1109,9 @@ sql
           IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.AcademiaCursos') AND name='TipoCurso')
             ALTER TABLE dbo.AcademiaCursos ADD TipoCurso NVARCHAR(50) NULL;
 
+          IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.AcademiaCursos') AND name='ImagenURL')
+            ALTER TABLE dbo.AcademiaCursos ADD ImagenURL NVARCHAR(500) NULL;
+
           -- Backfill TipoCurso desde el catálogo Cursos donde coincidan por nombre
           UPDATE ac SET ac.TipoCurso = c.TipoCurso
           FROM dbo.AcademiaCursos ac
@@ -9495,7 +9498,7 @@ app.get('/api/academia/cursos-publicos', async (req, res) => {
     if (!pool) return res.status(500).json({ error: 'No hay conexión SQL' });
     const r = await pool.request().query(`
       SELECT c.CursoAcademiaId, c.Nombre, c.Descripcion, c.Instructor, c.Modalidad,
-             c.Ubicacion, c.Capacidad, c.Estado, c.Generacion, c.HorasPorSesion, c.TipoCurso,
+             c.Ubicacion, c.Capacidad, c.Estado, c.Generacion, c.HorasPorSesion, c.TipoCurso, c.ImagenURL,
              (SELECT COUNT(*) FROM AcademiaInscripciones i WHERE i.CursoAcademiaId=c.CursoAcademiaId AND i.Activo=1) AS Inscritos,
              (SELECT COUNT(*) FROM AcademiaSesiones s WHERE s.CursoAcademiaId=c.CursoAcademiaId) AS TotalSesiones,
              (SELECT MIN(Fecha) FROM AcademiaSesiones s WHERE s.CursoAcademiaId=c.CursoAcademiaId) AS FechaInicio,
@@ -9528,29 +9531,29 @@ app.post('/api/academia/auto-inscripcion', async (req, res) => {
       .query(`SELECT InscripcionId FROM AcademiaInscripciones WHERE CursoAcademiaId=@cid AND NumeroEmpleado=@num AND Activo=1`);
     if (rExiste.recordset.length > 0) return res.status(400).json({ error: 'Ya estás inscrito en este curso' });
 
-    const rEmp = await pool.request()
+    let emp = null;
+    const rEmp1 = await pool.request()
       .input('num', sql.NVarChar, NumeroEmpleado)
-      .query(`SELECT TOP 1 Nombre + ' ' + ISNULL(Paterno,'') + ' ' + ISNULL(Materno,'') AS NombreCompleto,
-                     NumeroEmpleado, Correo,
-                     CASE iIdEmpresa WHEN 1 THEN 'UDAT' WHEN 2 THEN 'UCOT' WHEN 3 THEN 'ULOG' WHEN 4 THEN 'DRIV' ELSE 'Otra' END AS Empresa,
-                     Terminal, Plaza, Area
-              FROM Empleados WHERE NumeroEmpleado=@num AND Estatus='A'`);
-    const emp = rEmp.recordset[0];
-    if (!emp) return res.status(404).json({ error: 'Número de empleado no encontrado o inactivo' });
+      .query(`SELECT TOP 1 NumeroEmpleado, NombreCompleto, Empresa, Correo FROM MatrizColaboradores WHERE NumeroEmpleado=@num`);
+    emp = rEmp1.recordset[0] || null;
+    if (!emp) {
+      const rEmp2 = await pool.request()
+        .input('num', sql.NVarChar, NumeroEmpleado)
+        .query(`SELECT TOP 1 NumeroEmpleado, NombreCompleto, Empresa, CorreoElectronico AS Correo FROM Empleados WHERE NumeroEmpleado=@num`);
+      emp = rEmp2.recordset[0] || null;
+    }
+    if (!emp) return res.status(404).json({ error: 'Número de empleado no encontrado' });
 
     const rIns = await pool.request()
       .input('CursoId', sql.Int, CursoAcademiaId)
       .input('NumEmp', sql.NVarChar, emp.NumeroEmpleado)
-      .input('Nombre', sql.NVarChar, emp.NombreCompleto.trim())
-      .input('Empresa', sql.NVarChar, emp.Empresa)
+      .input('Nombre', sql.NVarChar, (emp.NombreCompleto || '').trim())
+      .input('Empresa', sql.NVarChar, emp.Empresa || null)
       .input('Correo', sql.NVarChar, emp.Correo || null)
-      .input('Terminal', sql.NVarChar, emp.Terminal || null)
-      .input('Plaza', sql.NVarChar, emp.Plaza || null)
-      .input('Area', sql.NVarChar, emp.Area || null)
       .input('InscritoPor', sql.NVarChar, 'Auto-inscripción')
-      .query(`INSERT INTO AcademiaInscripciones (CursoAcademiaId, NumeroEmpleado, NombreCompleto, Empresa, Correo, Terminal, Plaza, Area, InscritoPor)
+      .query(`INSERT INTO AcademiaInscripciones (CursoAcademiaId, NumeroEmpleado, NombreCompleto, Empresa, Correo, InscritoPor)
               OUTPUT INSERTED.*
-              VALUES (@CursoId, @NumEmp, @Nombre, @Empresa, @Correo, @Terminal, @Plaza, @Area, @InscritoPor)`);
+              VALUES (@CursoId, @NumEmp, @Nombre, @Empresa, @Correo, @InscritoPor)`);
 
     const inscripcion = rIns.recordset[0];
 
