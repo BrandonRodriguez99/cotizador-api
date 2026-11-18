@@ -1487,14 +1487,14 @@ sql
               Activo          BIT NOT NULL DEFAULT 1
             )
         `);
-        // Limpiar seed viejo (tenía 22 hombres con gaps) y forzar re-seed con 20 consecutivos
-        const { recordset: checkOld } = await pool.request().query(`
-          SELECT COUNT(*) AS c FROM Dormitorios WHERE Codigo='DR-H-22' AND Planta='Baja'
+        // Verificar que planta baja hombres tiene exactamente H-01..H-20 (no H-21/H-22 del seed viejo)
+        const { recordset: countH } = await pool.request().query(`
+          SELECT COUNT(*) AS c FROM Dormitorios WHERE Planta='Baja' AND Tipo='Hombres'
         `);
-        if (checkOld[0].c > 0) {
+        if (countH[0].c > 0 && countH[0].c !== 20) {
           await pool.request().query(`DELETE FROM DormitorioOcupantes`);
           await pool.request().query(`DELETE FROM Dormitorios`);
-          console.log('🔄 Re-seeding dormitorios con numeración correcta...');
+          console.log('🔄 Re-seeding dormitorios con numeración correcta (H-01..H-20)...');
         }
         console.log('✅ Tablas Dormitorios aseguradas');
 
