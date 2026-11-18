@@ -10618,17 +10618,32 @@ app.get('/api/dormitorios/:id/historial', autenticar, async (req, res) => {
 });
 
 // Buscar alumnos OPT para asignar
+app.get('/api/dormitorios/generaciones', autenticar, async (req, res) => {
+  try {
+    const { recordset } = await pool.request().query(`
+      SELECT DISTINCT sNumeroGeneracion AS Generacion
+      FROM dbo.OperacionesUDAT
+      WHERE sNumeroGeneracion IS NOT NULL AND sNumeroGeneracion <> ''
+        AND dFechaEgresoUDATReal IS NOT NULL AND dFechaEgresoUDATReal >= '2026-01-01'
+      ORDER BY sNumeroGeneracion DESC`);
+    res.json(recordset.map(r => r.Generacion));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/api/dormitorios/buscar-alumnos', autenticar, async (req, res) => {
   try {
     const q = req.query.q || '';
-    const { recordset } = await pool.request()
-      .input('q', sql.NVarChar, `%${q}%`)
-      .query(`SELECT TOP 20 iIdOperacion AS Id, sPerfil AS Matricula,
+    const gen = req.query.generacion || '';
+    const rq = pool.request().input('q', sql.NVarChar, `%${q}%`);
+    let where = `WHERE dFechaEgresoUDATReal IS NOT NULL AND dFechaEgresoUDATReal >= '2026-01-01'
+        AND (sEstatus IS NULL OR sEstatus NOT LIKE '%Baja%')`;
+    if (q) where += ` AND (sNombre + ' ' + sApellidoP LIKE @q OR sPerfil LIKE @q)`;
+    if (gen) { rq.input('gen', sql.NVarChar, gen); where += ` AND sNumeroGeneracion = @gen`; }
+    const { recordset } = await rq.query(`SELECT TOP 30 iIdOperacion AS Id, sPerfil AS Matricula,
         sNombre + ' ' + sApellidoP + ' ' + ISNULL(sApellidoM,'') AS NombreCompleto,
+        sNumeroGeneracion AS Generacion,
         CASE iIdEmpresa WHEN 1 THEN 'ALA' WHEN 10 THEN 'LARMEX' ELSE 'Empresa ' + CAST(iIdEmpresa AS VARCHAR) END AS Empresa
-        FROM dbo.OperacionesUDAT
-        WHERE (sNombre + ' ' + sApellidoP LIKE @q OR sPerfil LIKE @q)
-        AND sEstatus LIKE '%OPT%'
+        FROM dbo.OperacionesUDAT ${where}
         ORDER BY sNombre`);
     res.json(recordset);
   } catch (e) { res.status(500).json({ error: e.message }); }
