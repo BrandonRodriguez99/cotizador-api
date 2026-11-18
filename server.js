@@ -10651,6 +10651,13 @@ app.get('/api/dormitorios/buscar-alumnos', autenticar, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+app.get('/api/dormitorios/debug-cols', autenticar, async (req, res) => {
+  try {
+    const { recordset } = await pool.request().query(`SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='OperacionesUDAT' AND COLUMN_NAME LIKE '%echa%' ORDER BY COLUMN_NAME`);
+    res.json(recordset);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ─── SERVER ───────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => console.log(`🚀 Servidor corriendo en puerto ${PORT}`));
