@@ -1487,13 +1487,15 @@ sql
               Activo          BIT NOT NULL DEFAULT 1
             )
         `);
-        // Planta baja hombres: solo H-01 a H-20 (eliminar H-21 y H-22 si existen del seed anterior)
-        await pool.request().query(`
-          DELETE FROM DormitorioOcupantes WHERE DormitorioId IN (SELECT DormitorioId FROM Dormitorios WHERE Codigo IN ('DR-H-21','DR-H-22') AND Planta='Baja')
+        // Limpiar seed viejo (tenía 22 hombres con gaps) y forzar re-seed con 20 consecutivos
+        const { recordset: checkOld } = await pool.request().query(`
+          SELECT COUNT(*) AS c FROM Dormitorios WHERE Codigo='DR-H-22' AND Planta='Baja'
         `);
-        await pool.request().query(`
-          DELETE FROM Dormitorios WHERE Codigo IN ('DR-H-21','DR-H-22') AND Planta='Baja'
-        `);
+        if (checkOld[0].c > 0) {
+          await pool.request().query(`DELETE FROM DormitorioOcupantes`);
+          await pool.request().query(`DELETE FROM Dormitorios`);
+          console.log('🔄 Re-seeding dormitorios con numeración correcta...');
+        }
         console.log('✅ Tablas Dormitorios aseguradas');
 
       } catch (e) {
