@@ -5622,7 +5622,8 @@ app.put('/api/admin/permisos/:rol', autenticar, async (req, res) => {
     const { vistas } = req.body;
     if (!rol || !Array.isArray(vistas)) return res.status(400).json({ error: 'Faltan datos' });
     await pool.request().input('rol', sql.NVarChar(50), rol).query('DELETE FROM dbo.PermisosRol WHERE Rol=@rol');
-    for (const vista of vistas) {
+    const unique = [...new Set(vistas)];
+    for (const vista of unique) {
       await pool.request()
         .input('rol', sql.NVarChar(50), rol)
         .input('vista', sql.NVarChar(50), vista)
