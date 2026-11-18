@@ -1128,6 +1128,33 @@ sql
           INNER JOIN dbo.Cursos c ON c.Nombre = ac.Nombre
           WHERE ac.TipoCurso IS NULL AND c.TipoCurso IS NOT NULL AND c.TipoCurso <> '';
 
+          IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name='CatalogoCursos' AND schema_id=SCHEMA_ID('dbo'))
+            CREATE TABLE dbo.CatalogoCursos (
+              CatalogoCursoId INT IDENTITY(1,1) PRIMARY KEY,
+              Nombre          NVARCHAR(300) NOT NULL,
+              Descripcion     NVARCHAR(MAX) NULL,
+              Rama            NVARCHAR(100) NULL,
+              Niveles         NVARCHAR(100) NULL,
+              Temario         NVARCHAR(MAX) NULL,
+              Modalidad       NVARCHAR(50) DEFAULT 'Presencial',
+              Horas           DECIMAL(10,2) NULL,
+              NumeroSesiones  INT NULL,
+              TipoCurso       NVARCHAR(50) DEFAULT 'Interno',
+              Habilitado      BIT NOT NULL DEFAULT 1,
+              Orden           INT DEFAULT 0,
+              FechaCreacion   DATETIME DEFAULT GETDATE()
+            )
+
+          IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name='CatalogoRamas' AND schema_id=SCHEMA_ID('dbo'))
+            CREATE TABLE dbo.CatalogoRamas (
+              RamaId          INT IDENTITY(1,1) PRIMARY KEY,
+              Nombre          NVARCHAR(100) NOT NULL,
+              Descripcion     NVARCHAR(500) NULL,
+              ImagenURL       NVARCHAR(500) NULL,
+              Orden           INT DEFAULT 0,
+              Habilitado      BIT NOT NULL DEFAULT 1
+            )
+
           IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name='AcademiaSesiones' AND schema_id=SCHEMA_ID('dbo'))
             CREATE TABLE dbo.AcademiaSesiones (
               SesionId        INT IDENTITY(1,1) PRIMARY KEY,
@@ -9509,6 +9536,117 @@ app.get('/api/academia/calendario', autenticar, async (req, res) => {
       ORDER BY s.Fecha, s.HoraInicio
     `);
     res.json(r.recordset);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Catálogo público de cursos ──
+
+app.get('/api/academia/catalogo-publico', async (req, res) => {
+  try {
+    if (!pool) return res.status(500).json({ error: 'No hay conexión SQL' });
+    const rRamas = await pool.request().query(`SELECT * FROM CatalogoRamas WHERE Habilitado=1 ORDER BY Orden, Nombre`);
+    const rCursos = await pool.request().query(`SELECT * FROM CatalogoCursos WHERE Habilitado=1 ORDER BY Rama, Orden, Nombre`);
+    res.json({ ramas: rRamas.recordset, cursos: rCursos.recordset });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/academia/catalogo', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const rRamas = await pool.request().query(`SELECT * FROM CatalogoRamas ORDER BY Orden, Nombre`);
+    const rCursos = await pool.request().query(`SELECT * FROM CatalogoCursos ORDER BY Rama, Orden, Nombre`);
+    res.json({ ramas: rRamas.recordset, cursos: rCursos.recordset });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/academia/catalogo/ramas', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const { Nombre, Descripcion, ImagenURL, Orden } = req.body;
+    const r = await pool.request()
+      .input('Nombre', sql.NVarChar, Nombre)
+      .input('Descripcion', sql.NVarChar, Descripcion || null)
+      .input('ImagenURL', sql.NVarChar, ImagenURL || null)
+      .input('Orden', sql.Int, Orden || 0)
+      .query(`INSERT INTO CatalogoRamas (Nombre, Descripcion, ImagenURL, Orden) OUTPUT INSERTED.* VALUES (@Nombre, @Descripcion, @ImagenURL, @Orden)`);
+    res.json(r.recordset[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/api/academia/catalogo/ramas/:id', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const { Nombre, Descripcion, ImagenURL, Orden, Habilitado } = req.body;
+    await pool.request()
+      .input('id', sql.Int, req.params.id)
+      .input('Nombre', sql.NVarChar, Nombre)
+      .input('Descripcion', sql.NVarChar, Descripcion || null)
+      .input('ImagenURL', sql.NVarChar, ImagenURL || null)
+      .input('Orden', sql.Int, Orden || 0)
+      .input('Habilitado', sql.Bit, Habilitado != null ? (Habilitado ? 1 : 0) : 1)
+      .query(`UPDATE CatalogoRamas SET Nombre=@Nombre, Descripcion=@Descripcion, ImagenURL=@ImagenURL, Orden=@Orden, Habilitado=@Habilitado WHERE RamaId=@id`);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/academia/catalogo/ramas/:id', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    await pool.request().input('id', sql.Int, req.params.id).query(`DELETE FROM CatalogoRamas WHERE RamaId=@id`);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/academia/catalogo/cursos', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const { Nombre, Descripcion, Rama, Niveles, Temario, Modalidad, Horas, NumeroSesiones, TipoCurso, Orden } = req.body;
+    const r = await pool.request()
+      .input('Nombre', sql.NVarChar, Nombre)
+      .input('Descripcion', sql.NVarChar, Descripcion || null)
+      .input('Rama', sql.NVarChar, Rama || null)
+      .input('Niveles', sql.NVarChar, Niveles || null)
+      .input('Temario', sql.NVarChar, Temario || null)
+      .input('Modalidad', sql.NVarChar, Modalidad || 'Presencial')
+      .input('Horas', sql.Decimal(10,2), Horas || null)
+      .input('NumeroSesiones', sql.Int, NumeroSesiones || null)
+      .input('TipoCurso', sql.NVarChar, TipoCurso || 'Interno')
+      .input('Orden', sql.Int, Orden || 0)
+      .query(`INSERT INTO CatalogoCursos (Nombre, Descripcion, Rama, Niveles, Temario, Modalidad, Horas, NumeroSesiones, TipoCurso, Orden)
+              OUTPUT INSERTED.* VALUES (@Nombre, @Descripcion, @Rama, @Niveles, @Temario, @Modalidad, @Horas, @NumeroSesiones, @TipoCurso, @Orden)`);
+    res.json(r.recordset[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/api/academia/catalogo/cursos/:id', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    const { Nombre, Descripcion, Rama, Niveles, Temario, Modalidad, Horas, NumeroSesiones, TipoCurso, Orden, Habilitado } = req.body;
+    await pool.request()
+      .input('id', sql.Int, req.params.id)
+      .input('Nombre', sql.NVarChar, Nombre)
+      .input('Descripcion', sql.NVarChar, Descripcion || null)
+      .input('Rama', sql.NVarChar, Rama || null)
+      .input('Niveles', sql.NVarChar, Niveles || null)
+      .input('Temario', sql.NVarChar, Temario || null)
+      .input('Modalidad', sql.NVarChar, Modalidad || 'Presencial')
+      .input('Horas', sql.Decimal(10,2), Horas || null)
+      .input('NumeroSesiones', sql.Int, NumeroSesiones || null)
+      .input('TipoCurso', sql.NVarChar, TipoCurso || 'Interno')
+      .input('Orden', sql.Int, Orden || 0)
+      .input('Habilitado', sql.Bit, Habilitado != null ? (Habilitado ? 1 : 0) : 1)
+      .query(`UPDATE CatalogoCursos SET Nombre=@Nombre, Descripcion=@Descripcion, Rama=@Rama, Niveles=@Niveles,
+              Temario=@Temario, Modalidad=@Modalidad, Horas=@Horas, NumeroSesiones=@NumeroSesiones,
+              TipoCurso=@TipoCurso, Orden=@Orden, Habilitado=@Habilitado WHERE CatalogoCursoId=@id`);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/academia/catalogo/cursos/:id', autenticar, async (req, res) => {
+  try {
+    if (!ensurePool(res)) return;
+    await pool.request().input('id', sql.Int, req.params.id).query(`DELETE FROM CatalogoCursos WHERE CatalogoCursoId=@id`);
+    res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
