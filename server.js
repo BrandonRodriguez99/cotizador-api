@@ -1487,6 +1487,13 @@ sql
               Activo          BIT NOT NULL DEFAULT 1
             )
         `);
+        // Eliminar H-07 y H-09 si existen (no existen en el plano real)
+        await pool.request().query(`
+          DELETE FROM DormitorioOcupantes WHERE DormitorioId IN (SELECT DormitorioId FROM Dormitorios WHERE Codigo IN ('DR-H-07','DR-H-09'))
+        `);
+        await pool.request().query(`
+          DELETE FROM Dormitorios WHERE Codigo IN ('DR-H-07','DR-H-09')
+        `);
         console.log('✅ Tablas Dormitorios aseguradas');
 
       } catch (e) {
@@ -10541,7 +10548,10 @@ app.post('/api/dormitorios/seed', autenticar, async (req, res) => {
     if (recordset[0].c > 0) return res.json({ msg: 'Ya existen dormitorios, seed omitido', total: recordset[0].c });
     const rooms = [];
     for (let i = 1; i <= 15; i++) rooms.push({ Codigo: `DR-M-${String(i).padStart(2,'0')}`, Planta: 'Baja', Tipo: 'Mujeres', Capacidad: 2 });
-    for (let i = 1; i <= 22; i++) rooms.push({ Codigo: `DR-H-${String(i).padStart(2,'0')}`, Planta: 'Baja', Tipo: 'Hombres', Capacidad: 2 });
+    for (let i = 1; i <= 22; i++) {
+      if (i === 7 || i === 9) continue;
+      rooms.push({ Codigo: `DR-H-${String(i).padStart(2,'0')}`, Planta: 'Baja', Tipo: 'Hombres', Capacidad: 2 });
+    }
     for (let i = 23; i <= 48; i++) rooms.push({ Codigo: `DR-H-${String(i).padStart(2,'0')}`, Planta: 'Alta', Tipo: 'Hombres', Capacidad: 2 });
     for (const r of rooms) {
       await pool.request()
