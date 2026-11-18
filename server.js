@@ -10634,12 +10634,14 @@ app.get('/api/dormitorios/buscar-alumnos', autenticar, async (req, res) => {
   try {
     const q = req.query.q || '';
     const gen = req.query.generacion || '';
-    const rq = pool.request().input('q', sql.NVarChar, `%${q}%`);
+    if (!gen) return res.json([]);
+    const rq = pool.request().input('gen', sql.NVarChar, gen);
     let where = `WHERE dFechaEgresoUDATReal IS NOT NULL AND dFechaEgresoUDATReal >= '2026-01-01'
-        AND (sEstatus IS NULL OR sEstatus NOT LIKE '%Baja%')`;
-    if (q) where += ` AND (sNombre + ' ' + sApellidoP LIKE @q OR sPerfil LIKE @q)`;
-    if (gen) { rq.input('gen', sql.NVarChar, gen); where += ` AND sNumeroGeneracion = @gen`; }
-    const { recordset } = await rq.query(`SELECT TOP 30 iIdOperacion AS Id, sPerfil AS Matricula,
+        AND (sEstatus IS NULL OR sEstatus NOT LIKE '%Baja%')
+        AND sNumeroGeneracion = @gen
+        AND sPerfil NOT IN (SELECT Matricula FROM DormitorioOcupantes WHERE Activo=1)`;
+    if (q) { rq.input('q', sql.NVarChar, `%${q}%`); where += ` AND (sNombre + ' ' + sApellidoP LIKE @q OR sPerfil LIKE @q)`; }
+    const { recordset } = await rq.query(`SELECT iIdOperacion AS Id, sPerfil AS Matricula,
         sNombre + ' ' + sApellidoP + ' ' + ISNULL(sApellidoM,'') AS NombreCompleto,
         sNumeroGeneracion AS Generacion,
         CASE iIdEmpresa WHEN 1 THEN 'ALA' WHEN 10 THEN 'LARMEX' ELSE 'Empresa ' + CAST(iIdEmpresa AS VARCHAR) END AS Empresa
