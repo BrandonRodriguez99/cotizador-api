@@ -1474,6 +1474,33 @@ sql
         `);
         console.log('✅ Tablas 5S aseguradas');
 
+        // ─── Dormitorios ───────────────────────────────────────────────────
+        await pool.request().query(`
+          IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name='Dormitorios' AND schema_id=SCHEMA_ID('dbo'))
+            CREATE TABLE dbo.Dormitorios (
+              DormitorioId    INT IDENTITY(1,1) PRIMARY KEY,
+              Codigo          NVARCHAR(20) NOT NULL,
+              Planta          NVARCHAR(20) NOT NULL,
+              Tipo            NVARCHAR(10) NOT NULL,
+              Capacidad       INT NOT NULL DEFAULT 2,
+              Estado          NVARCHAR(20) NOT NULL DEFAULT 'Disponible',
+              Notas           NVARCHAR(500) NULL
+            )
+
+          IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name='DormitorioOcupantes' AND schema_id=SCHEMA_ID('dbo'))
+            CREATE TABLE dbo.DormitorioOcupantes (
+              OcupanteId      INT IDENTITY(1,1) PRIMARY KEY,
+              DormitorioId    INT NOT NULL REFERENCES Dormitorios(DormitorioId),
+              Matricula       NVARCHAR(50) NOT NULL,
+              NombreCompleto  NVARCHAR(200) NOT NULL,
+              Empresa         NVARCHAR(100) NULL,
+              FechaCheckIn    DATETIME NOT NULL DEFAULT GETDATE(),
+              FechaCheckOut   DATETIME NULL,
+              Activo          BIT NOT NULL DEFAULT 1
+            )
+        `);
+        console.log('✅ Tablas Dormitorios aseguradas');
+
       } catch (e) {
         console.log("❌ Error asegurando tablas:", e);
       }
@@ -10456,6 +10483,150 @@ async function generarRecordatoriosRedTag() {
 setInterval(generarRecordatoriosRedTag, 6 * 60 * 60 * 1000);
 // Primera ejecución a los 30 segundos de iniciar
 setTimeout(generarRecordatoriosRedTag, 30000);
+
+// ─── DORMITORIOS ─────────────────────────────────────────────────────────────
+
+// Listar todos los dormitorios con ocupantes activos
+app.get('/api/dormitorios', autenticar, async (req, res) => {
+  try {
+    const { recordset: dormitorios } = await pool.request().query(`
+      SELECT d.*,
+        (SELECT COUNT(*) FROM DormitorioOcupantes o WHERE o.DormitorioId=d.DormitorioId AND o.Activo=1) AS OcupantesActuales
+      FROM Dormitorios d ORDER BY d.Planta, d.Codigo`);
+    const { recordset: ocupantes } = await pool.request().query(`
+      SELECT * FROM DormitorioOcupantes WHERE Activo=1 ORDER BY FechaCheckIn`);
+    res.json({ dormitorios, ocupantes });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Crear dormitorio
+app.post('/api/dormitorios', autenticar, async (req, res) => {
+  try {
+    const { Codigo, Planta, Tipo, Capacidad, Notas } = req.body;
+    const { recordset } = await pool.request()
+      .input('Codigo', sql.NVarChar, Codigo)
+      .input('Planta', sql.NVarChar, Planta)
+      .input('Tipo', sql.NVarChar, Tipo)
+      .input('Capacidad', sql.Int, Capacidad || 2)
+      .input('Notas', sql.NVarChar, Notas || null)
+      .query(`INSERT INTO Dormitorios (Codigo, Planta, Tipo, Capacidad, Notas) OUTPUT INSERTED.* VALUES (@Codigo, @Planta, @Tipo, @Capacidad, @Notas)`);
+    res.json(recordset[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Actualizar dormitorio (estado, capacidad, notas)
+app.put('/api/dormitorios/:id', autenticar, async (req, res) => {
+  try {
+    const { Estado, Capacidad, Notas } = req.body;
+    await pool.request()
+      .input('id', sql.Int, req.params.id)
+      .input('Estado', sql.NVarChar, Estado)
+      .input('Capacidad', sql.Int, Capacidad)
+      .input('Notas', sql.NVarChar, Notas || null)
+      .query(`UPDATE Dormitorios SET Estado=@Estado, Capacidad=@Capacidad, Notas=@Notas WHERE DormitorioId=@id`);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Eliminar dormitorio
+app.delete('/api/dormitorios/:id', autenticar, async (req, res) => {
+  try {
+    await pool.request().input('id', sql.Int, req.params.id).query(`DELETE FROM DormitorioOcupantes WHERE DormitorioId=@id`);
+    await pool.request().input('id', sql.Int, req.params.id).query(`DELETE FROM Dormitorios WHERE DormitorioId=@id`);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Seed: crear todas las habitaciones iniciales
+app.post('/api/dormitorios/seed', autenticar, async (req, res) => {
+  try {
+    const { recordset } = await pool.request().query(`SELECT COUNT(*) AS c FROM Dormitorios`);
+    if (recordset[0].c > 0) return res.json({ msg: 'Ya existen dormitorios, seed omitido', total: recordset[0].c });
+    const rooms = [];
+    for (let i = 1; i <= 15; i++) rooms.push({ Codigo: `DR-M-${String(i).padStart(2,'0')}`, Planta: 'Baja', Tipo: 'Mujeres', Capacidad: 2 });
+    for (let i = 1; i <= 22; i++) rooms.push({ Codigo: `DR-H-${String(i).padStart(2,'0')}`, Planta: 'Baja', Tipo: 'Hombres', Capacidad: 2 });
+    for (let i = 23; i <= 48; i++) rooms.push({ Codigo: `DR-H-${String(i).padStart(2,'0')}`, Planta: 'Alta', Tipo: 'Hombres', Capacidad: 2 });
+    for (const r of rooms) {
+      await pool.request()
+        .input('Codigo', sql.NVarChar, r.Codigo)
+        .input('Planta', sql.NVarChar, r.Planta)
+        .input('Tipo', sql.NVarChar, r.Tipo)
+        .input('Capacidad', sql.Int, r.Capacidad)
+        .query(`INSERT INTO Dormitorios (Codigo, Planta, Tipo, Capacidad) VALUES (@Codigo, @Planta, @Tipo, @Capacidad)`);
+    }
+    res.json({ ok: true, total: rooms.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Check-in: asignar ocupante a dormitorio
+app.post('/api/dormitorios/:id/checkin', autenticar, async (req, res) => {
+  try {
+    const { Matricula, NombreCompleto, Empresa } = req.body;
+    const { recordset: dorm } = await pool.request().input('id', sql.Int, req.params.id).query(`SELECT * FROM Dormitorios WHERE DormitorioId=@id`);
+    if (!dorm.length) return res.status(404).json({ error: 'Dormitorio no encontrado' });
+    const { recordset: ocu } = await pool.request().input('id', sql.Int, req.params.id).query(`SELECT COUNT(*) AS c FROM DormitorioOcupantes WHERE DormitorioId=@id AND Activo=1`);
+    if (ocu[0].c >= dorm[0].Capacidad) return res.status(400).json({ error: 'Dormitorio lleno' });
+    const { recordset: nuevo } = await pool.request()
+      .input('did', sql.Int, req.params.id)
+      .input('Matricula', sql.NVarChar, Matricula)
+      .input('NombreCompleto', sql.NVarChar, NombreCompleto)
+      .input('Empresa', sql.NVarChar, Empresa || null)
+      .query(`INSERT INTO DormitorioOcupantes (DormitorioId, Matricula, NombreCompleto, Empresa) OUTPUT INSERTED.* VALUES (@did, @Matricula, @NombreCompleto, @Empresa)`);
+    // Auto-update estado
+    const { recordset: cnt } = await pool.request().input('id', sql.Int, req.params.id).query(`SELECT COUNT(*) AS c FROM DormitorioOcupantes WHERE DormitorioId=@id AND Activo=1`);
+    if (cnt[0].c >= dorm[0].Capacidad) {
+      await pool.request().input('id', sql.Int, req.params.id).query(`UPDATE Dormitorios SET Estado='Ocupada' WHERE DormitorioId=@id`);
+    }
+    res.json(nuevo[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Check-out: liberar ocupante
+app.post('/api/dormitorios/checkout/:ocupanteId', autenticar, async (req, res) => {
+  try {
+    await pool.request()
+      .input('id', sql.Int, req.params.ocupanteId)
+      .query(`UPDATE DormitorioOcupantes SET Activo=0, FechaCheckOut=GETDATE() WHERE OcupanteId=@id`);
+    // Get dormitorioId to auto-update estado
+    const { recordset } = await pool.request().input('id', sql.Int, req.params.ocupanteId).query(`SELECT DormitorioId FROM DormitorioOcupantes WHERE OcupanteId=@id`);
+    if (recordset.length) {
+      const did = recordset[0].DormitorioId;
+      const { recordset: cnt } = await pool.request().input('did', sql.Int, did).query(`SELECT COUNT(*) AS c FROM DormitorioOcupantes WHERE DormitorioId=@did AND Activo=1`);
+      const { recordset: dr } = await pool.request().input('did', sql.Int, did).query(`SELECT Estado FROM Dormitorios WHERE DormitorioId=@did`);
+      if (cnt[0].c === 0 && dr[0].Estado !== 'Mantenimiento') {
+        await pool.request().input('did', sql.Int, did).query(`UPDATE Dormitorios SET Estado='Disponible' WHERE DormitorioId=@did`);
+      }
+    }
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Historial de un dormitorio
+app.get('/api/dormitorios/:id/historial', autenticar, async (req, res) => {
+  try {
+    const { recordset } = await pool.request()
+      .input('id', sql.Int, req.params.id)
+      .query(`SELECT * FROM DormitorioOcupantes WHERE DormitorioId=@id ORDER BY FechaCheckIn DESC`);
+    res.json(recordset);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Buscar alumnos OPT para asignar
+app.get('/api/dormitorios/buscar-alumnos', autenticar, async (req, res) => {
+  try {
+    const q = req.query.q || '';
+    const { recordset } = await pool.request()
+      .input('q', sql.NVarChar, `%${q}%`)
+      .query(`SELECT TOP 20 sPerfil AS Matricula,
+        sNombre + ' ' + sApellidoP + ' ' + ISNULL(sApellidoM,'') AS NombreCompleto,
+        CASE iIdEmpresa WHEN 1 THEN 'ALA' WHEN 10 THEN 'LARMEX' ELSE 'Empresa ' + CAST(iIdEmpresa AS VARCHAR) END AS Empresa
+        FROM OperacionesUDAT
+        WHERE (sNombre + ' ' + sApellidoP LIKE @q OR sPerfil LIKE @q)
+        AND sTipoOperador = 'OPT'
+        ORDER BY sNombre`);
+    res.json(recordset);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 
 // ─── SERVER ───────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 4000;
