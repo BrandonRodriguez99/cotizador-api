@@ -10623,12 +10623,12 @@ app.get('/api/dormitorios/buscar-alumnos', autenticar, async (req, res) => {
     const q = req.query.q || '';
     const { recordset } = await pool.request()
       .input('q', sql.NVarChar, `%${q}%`)
-      .query(`SELECT TOP 20 sPerfil AS Matricula,
+      .query(`SELECT TOP 20 iIdOperacion AS Id, sPerfil AS Matricula,
         sNombre + ' ' + sApellidoP + ' ' + ISNULL(sApellidoM,'') AS NombreCompleto,
         CASE iIdEmpresa WHEN 1 THEN 'ALA' WHEN 10 THEN 'LARMEX' ELSE 'Empresa ' + CAST(iIdEmpresa AS VARCHAR) END AS Empresa
-        FROM OperacionesUDAT
+        FROM dbo.OperacionesUDAT
         WHERE (sNombre + ' ' + sApellidoP LIKE @q OR sPerfil LIKE @q)
-        AND sTipoOperador = 'OPT'
+        AND sEstatus LIKE '%OPT%'
         ORDER BY sNombre`);
     res.json(recordset);
   } catch (e) { res.status(500).json({ error: e.message }); }
