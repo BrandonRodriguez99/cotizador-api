@@ -10624,7 +10624,7 @@ app.get('/api/dormitorios/generaciones', autenticar, async (req, res) => {
       SELECT DISTINCT sNumeroGeneracion AS Generacion
       FROM dbo.OperacionesUDAT
       WHERE sNumeroGeneracion IS NOT NULL AND sNumeroGeneracion <> ''
-        AND dFechaEgresoUDATReal IS NOT NULL AND dFechaEgresoUDATReal >= '2026-01-01'
+        AND dFechaIngreso IS NOT NULL AND dFechaIngreso >= '2026-01-01'
       ORDER BY sNumeroGeneracion DESC`);
     res.json(recordset.map(r => r.Generacion));
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -10636,7 +10636,7 @@ app.get('/api/dormitorios/buscar-alumnos', autenticar, async (req, res) => {
     const gen = req.query.generacion || '';
     if (!gen) return res.json([]);
     const rq = pool.request().input('gen', sql.NVarChar, gen);
-    let where = `WHERE dFechaEgresoUDATReal IS NOT NULL AND dFechaEgresoUDATReal >= '2026-01-01'
+    let where = `WHERE dFechaIngreso IS NOT NULL AND dFechaIngreso >= '2026-01-01'
         AND (sEstatus IS NULL OR sEstatus NOT LIKE '%Baja%')
         AND sNumeroGeneracion = @gen
         AND sPerfil NOT IN (SELECT Matricula FROM DormitorioOcupantes WHERE Activo=1)`;
@@ -10647,13 +10647,6 @@ app.get('/api/dormitorios/buscar-alumnos', autenticar, async (req, res) => {
         CASE iIdEmpresa WHEN 1 THEN 'ALA' WHEN 10 THEN 'LARMEX' ELSE 'Empresa ' + CAST(iIdEmpresa AS VARCHAR) END AS Empresa
         FROM dbo.OperacionesUDAT ${where}
         ORDER BY sNombre`);
-    res.json(recordset);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.get('/api/dormitorios/debug-cols', autenticar, async (req, res) => {
-  try {
-    const { recordset } = await pool.request().query(`SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='OperacionesUDAT' AND COLUMN_NAME LIKE '%echa%' ORDER BY COLUMN_NAME`);
     res.json(recordset);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
