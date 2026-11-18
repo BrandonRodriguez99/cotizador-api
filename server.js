@@ -1487,14 +1487,14 @@ sql
               Activo          BIT NOT NULL DEFAULT 1
             )
         `);
-        // Verificar que planta baja hombres tiene exactamente H-01..H-20 (no H-21/H-22 del seed viejo)
-        const { recordset: countH } = await pool.request().query(`
-          SELECT COUNT(*) AS c FROM Dormitorios WHERE Planta='Baja' AND Tipo='Hombres'
-        `);
-        if (countH[0].c > 0 && countH[0].c !== 20) {
+        // Verificar numeración correcta: Baja H-01..H-20 (20), Alta H-21..H-46 (26)
+        const { recordset: countBH } = await pool.request().query(`SELECT COUNT(*) AS c FROM Dormitorios WHERE Planta='Baja' AND Tipo='Hombres'`);
+        const { recordset: countAH } = await pool.request().query(`SELECT COUNT(*) AS c FROM Dormitorios WHERE Planta='Alta'`);
+        const { recordset: checkH21 } = await pool.request().query(`SELECT COUNT(*) AS c FROM Dormitorios WHERE Codigo='DR-H-21'`);
+        if ((countBH[0].c > 0 && countBH[0].c !== 20) || (countAH[0].c > 0 && countAH[0].c !== 26) || (countAH[0].c > 0 && checkH21[0].c === 0)) {
           await pool.request().query(`DELETE FROM DormitorioOcupantes`);
           await pool.request().query(`DELETE FROM Dormitorios`);
-          console.log('🔄 Re-seeding dormitorios con numeración correcta (H-01..H-20)...');
+          console.log('🔄 Re-seeding dormitorios (Baja H-01..H-20, Alta H-21..H-46)...');
         }
         console.log('✅ Tablas Dormitorios aseguradas');
 
@@ -10551,7 +10551,7 @@ app.post('/api/dormitorios/seed', autenticar, async (req, res) => {
     const rooms = [];
     for (let i = 1; i <= 15; i++) rooms.push({ Codigo: `DR-M-${String(i).padStart(2,'0')}`, Planta: 'Baja', Tipo: 'Mujeres', Capacidad: 2 });
     for (let i = 1; i <= 20; i++) rooms.push({ Codigo: `DR-H-${String(i).padStart(2,'0')}`, Planta: 'Baja', Tipo: 'Hombres', Capacidad: 2 });
-    for (let i = 23; i <= 48; i++) rooms.push({ Codigo: `DR-H-${String(i).padStart(2,'0')}`, Planta: 'Alta', Tipo: 'Hombres', Capacidad: 2 });
+    for (let i = 21; i <= 46; i++) rooms.push({ Codigo: `DR-H-${String(i).padStart(2,'0')}`, Planta: 'Alta', Tipo: 'Hombres', Capacidad: 2 });
     for (const r of rooms) {
       await pool.request()
         .input('Codigo', sql.NVarChar, r.Codigo)
