@@ -914,11 +914,20 @@ sql
         `);
         console.log('✅ Tabla PermisosRol asegurada');
 
-        // ── Migración: vistas nuevas para admin ────────────────────────────────
-        await pool.request().query(`
-          IF NOT EXISTS (SELECT 1 FROM dbo.PermisosRol WHERE Rol='admin' AND Vista='formularios')
-            INSERT INTO dbo.PermisosRol (Rol, Vista) VALUES ('admin','formularios')
-        `);
+        // ── Migración: asegurar TODAS las vistas del admin ──
+        const adminVistas = [
+          'dashboard','inicio','mantenimiento','inventario','ordenesCompra','registroProveedores',
+          'cotizacion','historial','aprobaciones','asistencia','vehiculos','seguridad',
+          'cursos','conceptos','coaches','modalidades','clientes','proveedores',
+          'unidadesNegocio','areasConsumo','usuarios','permisos','formularios',
+          'dvir','diesel','cincos','academia','dormitorios','seguimientoOpt'
+        ];
+        for (const vista of adminVistas) {
+          await pool.request().query(`
+            IF NOT EXISTS (SELECT 1 FROM dbo.PermisosRol WHERE Rol='admin' AND Vista='${vista}')
+              INSERT INTO dbo.PermisosRol (Rol, Vista) VALUES ('admin','${vista}')
+          `);
+        }
 
         // ── Migración: vistas dvir/diesel/formularios para encargado_vehiculos ──
         for (const vista of ['dvir', 'diesel', 'formularios']) {
@@ -940,18 +949,6 @@ sql
         await pool.request().query(`
           IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.CincoS_Areas') AND name='ChampionId')
             ALTER TABLE dbo.CincoS_Areas ADD ChampionId INT NULL
-        `);
-
-        // ── Migración: vista cincos (5S) para admin ──
-        await pool.request().query(`
-          IF NOT EXISTS (SELECT 1 FROM dbo.PermisosRol WHERE Rol='admin' AND Vista='cincos')
-            INSERT INTO dbo.PermisosRol (Rol, Vista) VALUES ('admin','cincos')
-        `);
-
-        // ── Migración: vista dormitorios para admin ──
-        await pool.request().query(`
-          IF NOT EXISTS (SELECT 1 FROM dbo.PermisosRol WHERE Rol='admin' AND Vista='dormitorios')
-            INSERT INTO dbo.PermisosRol (Rol, Vista) VALUES ('admin','dormitorios')
         `);
 
         // ── Módulo DVIR ────────────────────────────────────────────────────────
@@ -1014,11 +1011,6 @@ sql
           IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.DVIR') AND name='TipoDVIR')
             ALTER TABLE dbo.DVIR ADD TipoDVIR NVARCHAR(30) NULL
         `);
-        // Permiso dvir para admin
-        await pool.request().query(`
-          IF NOT EXISTS (SELECT 1 FROM dbo.PermisosRol WHERE Rol='admin' AND Vista='dvir')
-            INSERT INTO dbo.PermisosRol (Rol, Vista) VALUES ('admin','dvir')
-        `);
         console.log('✅ Tablas DVIR aseguradas');
 
         // ── ControlDiesel ──────────────────────────────────────────────────────
@@ -1044,11 +1036,6 @@ sql
               FechaRegistro  DATETIME NOT NULL DEFAULT GETDATE(),
               Eliminado      BIT NOT NULL DEFAULT 0
             )
-        `);
-        // Permiso diesel para admin
-        await pool.request().query(`
-          IF NOT EXISTS (SELECT 1 FROM dbo.PermisosRol WHERE Rol='admin' AND Vista='diesel')
-            INSERT INTO dbo.PermisosRol (Rol, Vista) VALUES ('admin','diesel')
         `);
         console.log('✅ Tabla ControlDiesel asegurada');
 
@@ -1217,11 +1204,6 @@ sql
         await pool.request().query(`
           IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.AcademiaAsistencias') AND name='Firma')
             ALTER TABLE dbo.AcademiaAsistencias ADD Firma NVARCHAR(200) NULL
-        `);
-        // Vista academia para admin
-        await pool.request().query(`
-          IF NOT EXISTS (SELECT 1 FROM dbo.PermisosRol WHERE Rol='admin' AND Vista='academia')
-            INSERT INTO dbo.PermisosRol (Rol, Vista) VALUES ('admin','academia')
         `);
         // Vista academia para rol academia (acceso completo — tabs filtrados en frontend)
         await pool.request().query(`
@@ -5621,13 +5603,21 @@ app.put('/api/admin/permisos/:rol', autenticar, async (req, res) => {
     const rol = req.params.rol;
     const { vistas } = req.body;
     if (!rol || !Array.isArray(vistas)) return res.status(400).json({ error: 'Faltan datos' });
-    await pool.request().input('rol', sql.NVarChar(50), rol).query('DELETE FROM dbo.PermisosRol WHERE Rol=@rol');
-    const unique = [...new Set(vistas)];
-    for (const vista of unique) {
-      await pool.request()
-        .input('rol', sql.NVarChar(50), rol)
-        .input('vista', sql.NVarChar(50), vista)
-        .query('INSERT INTO dbo.PermisosRol (Rol, Vista) VALUES (@rol, @vista)');
+    const tx = new sql.Transaction(pool);
+    await tx.begin();
+    try {
+      await tx.request().input('rol', sql.NVarChar(50), rol).query('DELETE FROM dbo.PermisosRol WHERE Rol=@rol');
+      const unique = [...new Set(vistas)];
+      for (const vista of unique) {
+        await tx.request()
+          .input('rol', sql.NVarChar(50), rol)
+          .input('vista', sql.NVarChar(50), vista)
+          .query('INSERT INTO dbo.PermisosRol (Rol, Vista) VALUES (@rol, @vista)');
+      }
+      await tx.commit();
+    } catch (txErr) {
+      await tx.rollback();
+      throw txErr;
     }
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
