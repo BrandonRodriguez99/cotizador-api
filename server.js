@@ -948,6 +948,12 @@ sql
             INSERT INTO dbo.PermisosRol (Rol, Vista) VALUES ('admin','cincos')
         `);
 
+        // ── Migración: vista dormitorios para admin ──
+        await pool.request().query(`
+          IF NOT EXISTS (SELECT 1 FROM dbo.PermisosRol WHERE Rol='admin' AND Vista='dormitorios')
+            INSERT INTO dbo.PermisosRol (Rol, Vista) VALUES ('admin','dormitorios')
+        `);
+
         // ── Módulo DVIR ────────────────────────────────────────────────────────
         await pool.request().query(`
           IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name='DVIR' AND schema_id=SCHEMA_ID('dbo'))
