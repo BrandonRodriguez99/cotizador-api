@@ -10669,17 +10669,20 @@ app.post('/api/dormitorios/seed', autenticar, async (req, res) => {
 // Check-in: asignar ocupante a dormitorio
 app.post('/api/dormitorios/:id/checkin', autenticar, async (req, res) => {
   try {
-    const { Matricula, NombreCompleto, Empresa } = req.body;
+    const { Matricula, NombreCompleto, Empresa, TipoOcupante } = req.body;
     const { recordset: dorm } = await pool.request().input('id', sql.Int, req.params.id).query(`SELECT * FROM Dormitorios WHERE DormitorioId=@id`);
     if (!dorm.length) return res.status(404).json({ error: 'Dormitorio no encontrado' });
     const { recordset: ocu } = await pool.request().input('id', sql.Int, req.params.id).query(`SELECT COUNT(*) AS c FROM DormitorioOcupantes WHERE DormitorioId=@id AND Activo=1`);
     if (ocu[0].c >= dorm[0].Capacidad) return res.status(400).json({ error: 'Dormitorio lleno' });
+    // Auto-add column TipoOcupante if not exists
+    await pool.request().query(`IF COL_LENGTH('DormitorioOcupantes','TipoOcupante') IS NULL ALTER TABLE DormitorioOcupantes ADD TipoOcupante NVARCHAR(20) DEFAULT 'Alumno'`);
     const { recordset: nuevo } = await pool.request()
       .input('did', sql.Int, req.params.id)
       .input('Matricula', sql.NVarChar, Matricula)
       .input('NombreCompleto', sql.NVarChar, NombreCompleto)
       .input('Empresa', sql.NVarChar, Empresa || null)
-      .query(`INSERT INTO DormitorioOcupantes (DormitorioId, Matricula, NombreCompleto, Empresa) OUTPUT INSERTED.* VALUES (@did, @Matricula, @NombreCompleto, @Empresa)`);
+      .input('TipoOcupante', sql.NVarChar, TipoOcupante || 'Alumno')
+      .query(`INSERT INTO DormitorioOcupantes (DormitorioId, Matricula, NombreCompleto, Empresa, TipoOcupante) OUTPUT INSERTED.* VALUES (@did, @Matricula, @NombreCompleto, @Empresa, @TipoOcupante)`);
     // Auto-update estado
     const { recordset: cnt } = await pool.request().input('id', sql.Int, req.params.id).query(`SELECT COUNT(*) AS c FROM DormitorioOcupantes WHERE DormitorioId=@id AND Activo=1`);
     if (cnt[0].c >= dorm[0].Capacidad) {
