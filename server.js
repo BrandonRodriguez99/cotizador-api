@@ -10586,6 +10586,7 @@ app.get('/api/dormitorios/historial-global', autenticar, async (req, res) => {
     if (req.query.habitacion) { rq.input('hab', sql.NVarChar, `%${req.query.habitacion}%`); where += ` AND d.Codigo LIKE @hab`; }
     if (req.query.activo === '1') where += ` AND o.Activo = 1`;
     if (req.query.activo === '0') where += ` AND o.Activo = 0`;
+    if (req.query.tipo) { rq.input('tipo', sql.NVarChar, req.query.tipo); where += ` AND ISNULL(o.TipoOcupante,'Alumno') = @tipo`; }
     const { recordset } = await rq.query(`
       SELECT o.*, d.Codigo, d.Planta, d.Tipo
       FROM DormitorioOcupantes o
