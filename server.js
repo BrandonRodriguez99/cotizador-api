@@ -10541,6 +10541,72 @@ app.get('/api/dormitorios/buscar-alumnos', autenticar, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Buscar operadores del grupo (STG.OperadoresHomologados en biUDAT)
+app.get('/api/dormitorios/buscar-operadores', autenticar, async (req, res) => {
+  try {
+    const { recordset: asignados } = await pool.request().query(`SELECT Matricula FROM DormitorioOcupantes WHERE Activo=1`);
+    const asignadosSet = new Set(asignados.map(a => a.Matricula));
+    let filtroExtra = '';
+    const rq = pool.request();
+    if (req.query.q) {
+      rq.input('q', sql.NVarChar, `%${req.query.q}%`);
+      filtroExtra = ` AND (o.sNombre + ' ' + ISNULL(o.sApellidoPaterno,'') LIKE @q OR o.sNombre LIKE @q OR CAST(o.iIdOperadorHomologado AS NVARCHAR) LIKE @q)`;
+    }
+    if (req.query.empresa) {
+      rq.input('emp', sql.Int, parseInt(req.query.empresa));
+      filtroExtra += ` AND o.iIdEmpresa = @emp`;
+    }
+    const { recordset } = await rq.query(`
+      SELECT o.iIdOperadorHomologado AS Id,
+        CAST(o.iIdOperadorHomologado AS NVARCHAR) AS Matricula,
+        LTRIM(RTRIM(ISNULL(o.sNombre,'') + ' ' + ISNULL(o.sApellidoPaterno,'') + ' ' + ISNULL(o.sApellidoMaterno,''))) AS NombreCompleto,
+        CASE o.iIdEmpresa
+          WHEN 1 THEN 'ALA' WHEN 2 THEN 'TM' WHEN 3 THEN 'TLH'
+          WHEN 5 THEN 'TJA' WHEN 6 THEN 'TMI' WHEN 7 THEN 'AT'
+          WHEN 8 THEN 'AUTOS' WHEN 9 THEN 'FEM' WHEN 10 THEN 'TLM'
+          ELSE 'Otra'
+        END AS Empresa,
+        o.iIdEmpresa
+      FROM STG.OperadoresHomologados o
+      WHERE o.BActivo = 1 ${filtroExtra}
+      ORDER BY o.sApellidoPaterno, o.sApellidoMaterno, o.sNombre`);
+    const filtered = recordset.filter(r => !asignadosSet.has(r.Matricula));
+    res.json(filtered);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Historial global de dormitorios (con filtros de fecha, búsqueda, habitación)
+app.get('/api/dormitorios/historial-global', autenticar, async (req, res) => {
+  try {
+    const rq = pool.request();
+    let where = '1=1';
+    if (req.query.fechaDesde) { rq.input('desde', sql.Date, req.query.fechaDesde); where += ` AND o.FechaCheckIn >= @desde`; }
+    if (req.query.fechaHasta) { rq.input('hasta', sql.Date, req.query.fechaHasta); where += ` AND o.FechaCheckIn <= DATEADD(day,1,@hasta)`; }
+    if (req.query.q) { rq.input('q', sql.NVarChar, `%${req.query.q}%`); where += ` AND (o.NombreCompleto LIKE @q OR o.Matricula LIKE @q)`; }
+    if (req.query.habitacion) { rq.input('hab', sql.NVarChar, `%${req.query.habitacion}%`); where += ` AND d.Codigo LIKE @hab`; }
+    if (req.query.activo === '1') where += ` AND o.Activo = 1`;
+    if (req.query.activo === '0') where += ` AND o.Activo = 0`;
+    const { recordset } = await rq.query(`
+      SELECT o.*, d.Codigo, d.Planta, d.Tipo
+      FROM DormitorioOcupantes o
+      INNER JOIN Dormitorios d ON d.DormitorioId = o.DormitorioId
+      WHERE ${where}
+      ORDER BY o.FechaCheckIn DESC`);
+    res.json(recordset);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Empresas de operadores homologados (para filtro)
+app.get('/api/dormitorios/empresas-operadores', autenticar, async (req, res) => {
+  try {
+    res.json([
+      { id: 1, nombre: 'ALA' }, { id: 2, nombre: 'TM' }, { id: 3, nombre: 'TLH' },
+      { id: 5, nombre: 'TJA' }, { id: 6, nombre: 'TMI' }, { id: 7, nombre: 'AT' },
+      { id: 8, nombre: 'AUTOS' }, { id: 9, nombre: 'FEM' }, { id: 10, nombre: 'TLM' },
+    ]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Crear dormitorio
 app.post('/api/dormitorios', autenticar, async (req, res) => {
   try {
@@ -10652,8 +10718,6 @@ app.get('/api/dormitorios/:id/historial', autenticar, async (req, res) => {
     res.json(recordset);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
-
-// Buscar alumnos OPT para asignar
 
 // ─── SERVER ───────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 4000;
