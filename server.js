@@ -10597,6 +10597,55 @@ app.get('/api/dormitorios/historial-global', autenticar, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Detalle de alumno por matrícula (UDAT.dbo.Operador)
+app.get('/api/dormitorios/detalle-alumno', autenticar, async (req, res) => {
+  try {
+    if (!poolUDAT) return res.status(500).json({ error: 'Sin conexión a UDAT' });
+    const mat = req.query.matricula;
+    if (!mat) return res.status(400).json({ error: 'Matrícula requerida' });
+    const { recordset } = await poolUDAT.request().input('mat', sql.NVarChar, mat).query(`
+      SELECT o.OperadorId, o.Matricula,
+        LTRIM(RTRIM(ISNULL(o.Nombre,'') + ' ' + ISNULL(o.ApellidoPaterno,'') + ' ' + ISNULL(o.ApellidoMaterno,''))) AS NombreCompleto,
+        o.Nombre, o.ApellidoPaterno, o.ApellidoMaterno,
+        ISNULL(emp.Nombre,'') AS Empresa,
+        o.FechaNacimiento, o.Sexo, o.CURP, o.Telefono, o.Correo,
+        o.FechaIngreso, o.FechaEgreso
+      FROM dbo.Operador o
+      LEFT JOIN dbo.Empresa emp ON emp.EmpresaId = o.EmpresaId
+      WHERE o.Matricula = @mat`);
+    if (!recordset.length) return res.status(404).json({ error: 'Alumno no encontrado' });
+    res.json(recordset[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Detalle de operador homologado por Matricula (NumeroEmpleadoCompuesto)
+app.get('/api/dormitorios/detalle-operador', autenticar, async (req, res) => {
+  try {
+    const mat = req.query.matricula;
+    if (!mat) return res.status(400).json({ error: 'Matrícula requerida' });
+    const { recordset } = await pool.request().input('mat', sql.NVarChar, mat).query(`
+      SELECT o.OperadorHomologadoId, o.OperadorNombre AS NombreCompleto,
+        o.NumeroEmpleadoCompuesto, o.NumeroEmpleado, o.CURP,
+        o.FechaNacimiento, o.EdadYears AS Edad,
+        o.FechaIngreso, o.AntiguedadYears, o.AntiguedadMonths,
+        o.TelefonoCasa, o.TelefonoMovil, o.TelefonoContactoEmergencia,
+        o.LicenciaNumero, o.LicenciaTipoNombre, o.LicenciaVencimientoFecha,
+        o.AreaNombre, o.DivisionNombre, o.UnidadNegocioNombre,
+        o.UnidadOperativaNombre, o.TerminalNombre, o.PlazaNombre,
+        o.FotoUrl,
+        CASE o.EmpresaId
+          WHEN 1 THEN 'ALA' WHEN 2 THEN 'TM' WHEN 3 THEN 'TLH'
+          WHEN 5 THEN 'TJA' WHEN 6 THEN 'TMI' WHEN 7 THEN 'AT'
+          WHEN 8 THEN 'AUTOS' WHEN 9 THEN 'FEM' WHEN 10 THEN 'TLM'
+          ELSE 'Otra'
+        END AS Empresa
+      FROM STG.OperadoresHomologados o
+      WHERE o.NumeroEmpleadoCompuesto = @mat OR CAST(o.OperadorHomologadoId AS NVARCHAR) = @mat`);
+    if (!recordset.length) return res.status(404).json({ error: 'Operador no encontrado' });
+    res.json(recordset[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Empresas de operadores homologados (para filtro)
 app.get('/api/dormitorios/empresas-operadores', autenticar, async (req, res) => {
   try {
