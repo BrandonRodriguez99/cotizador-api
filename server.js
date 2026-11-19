@@ -10558,7 +10558,7 @@ app.get('/api/dormitorios/buscar-operadores', autenticar, async (req, res) => {
     }
     const { recordset } = await rq.query(`
       SELECT o.OperadorHomologadoId AS Id,
-        CAST(o.OperadorHomologadoId AS NVARCHAR) AS Matricula,
+        ISNULL(o.NumeroEmpleadoCompuesto, CAST(o.OperadorHomologadoId AS NVARCHAR)) AS Matricula,
         o.OperadorNombre AS NombreCompleto,
         CASE o.EmpresaId
           WHEN 1 THEN 'ALA' WHEN 2 THEN 'TM' WHEN 3 THEN 'TLH'
