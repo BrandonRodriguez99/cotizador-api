@@ -10651,6 +10651,16 @@ app.get('/api/dormitorios/buscar-alumnos', autenticar, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+app.get('/api/dormitorios/debug-cols', autenticar, async (req, res) => {
+  try {
+    const { recordset: cols } = await pool.request().query(`SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='OperacionesUDAT' AND (COLUMN_NAME LIKE '%echa%' OR COLUMN_NAME LIKE '%ngreso%') ORDER BY COLUMN_NAME`);
+    const { recordset: sample } = await pool.request().query(`SELECT TOP 3 sPerfil, sNombre, sNumeroGeneracion, dFechaIngreso, sEstatus FROM dbo.OperacionesUDAT WHERE sNumeroGeneracion IS NOT NULL ORDER BY iIdOperacion DESC`);
+    const { recordset: gen380 } = await pool.request().query(`SELECT COUNT(*) AS c FROM dbo.OperacionesUDAT WHERE sNumeroGeneracion='380'`);
+    const { recordset: gen380fecha } = await pool.request().query(`SELECT TOP 3 sPerfil, sNombre, dFechaIngreso, sEstatus FROM dbo.OperacionesUDAT WHERE sNumeroGeneracion='380'`);
+    res.json({ cols, sample, gen380: gen380[0].c, gen380fecha });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ─── SERVER ───────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => console.log(`🚀 Servidor corriendo en puerto ${PORT}`));
