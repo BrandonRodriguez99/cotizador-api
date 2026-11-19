@@ -10624,7 +10624,6 @@ app.get('/api/dormitorios/generaciones', autenticar, async (req, res) => {
       SELECT DISTINCT sNumeroGeneracion AS Generacion
       FROM dbo.OperacionesUDAT
       WHERE sNumeroGeneracion IS NOT NULL AND sNumeroGeneracion <> ''
-        AND dFechaIngreso IS NOT NULL AND dFechaIngreso >= '2026-01-01'
       ORDER BY sNumeroGeneracion DESC`);
     res.json(recordset.map(r => r.Generacion));
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -10636,8 +10635,7 @@ app.get('/api/dormitorios/buscar-alumnos', autenticar, async (req, res) => {
     const gen = req.query.generacion || '';
     if (!gen) return res.json([]);
     const rq = pool.request().input('gen', sql.NVarChar, gen);
-    let where = `WHERE dFechaIngreso IS NOT NULL AND dFechaIngreso >= '2026-01-01'
-        AND (sEstatus IS NULL OR sEstatus NOT LIKE '%Baja%')
+    let where = `WHERE (sEstatus IS NULL OR sEstatus NOT LIKE '%Baja%')
         AND sNumeroGeneracion = @gen
         AND sPerfil NOT IN (SELECT Matricula FROM DormitorioOcupantes WHERE Activo=1)`;
     if (q) { rq.input('q', sql.NVarChar, `%${q}%`); where += ` AND (sNombre + ' ' + sApellidoP LIKE @q OR sPerfil LIKE @q)`; }
@@ -10648,16 +10646,6 @@ app.get('/api/dormitorios/buscar-alumnos', autenticar, async (req, res) => {
         FROM dbo.OperacionesUDAT ${where}
         ORDER BY sNombre`);
     res.json(recordset);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.get('/api/dormitorios/debug-cols', autenticar, async (req, res) => {
-  try {
-    const { recordset: cols } = await pool.request().query(`SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='OperacionesUDAT' AND (COLUMN_NAME LIKE '%echa%' OR COLUMN_NAME LIKE '%ngreso%') ORDER BY COLUMN_NAME`);
-    const { recordset: sample } = await pool.request().query(`SELECT TOP 3 sPerfil, sNombre, sNumeroGeneracion, dFechaIngreso, sEstatus FROM dbo.OperacionesUDAT WHERE sNumeroGeneracion IS NOT NULL ORDER BY iIdOperacion DESC`);
-    const { recordset: gen380 } = await pool.request().query(`SELECT COUNT(*) AS c FROM dbo.OperacionesUDAT WHERE sNumeroGeneracion='380'`);
-    const { recordset: gen380fecha } = await pool.request().query(`SELECT TOP 3 sPerfil, sNombre, dFechaIngreso, sEstatus FROM dbo.OperacionesUDAT WHERE sNumeroGeneracion='380'`);
-    res.json({ cols, sample, gen380: gen380[0].c, gen380fecha });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
