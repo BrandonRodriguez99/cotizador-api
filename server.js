@@ -10509,7 +10509,9 @@ app.get('/api/dormitorios/generaciones', autenticar, async (req, res) => {
   try {
     if (!poolUDAT) return res.status(500).json({ error: 'Sin conexión a UDAT' });
     const { recordset } = await poolUDAT.request().query(`
-      SELECT GeneracionId, Nombre FROM dbo.Generacion ORDER BY Nombre DESC`);
+      SELECT GeneracionId, Nombre FROM dbo.Generacion
+      WHERE Nombre LIKE 'Generacion %'
+      ORDER BY GeneracionId DESC`);
     res.json(recordset);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -10519,21 +10521,18 @@ app.get('/api/dormitorios/buscar-alumnos', autenticar, async (req, res) => {
     if (!poolUDAT) return res.status(500).json({ error: 'Sin conexión a UDAT' });
     const genId = Number(req.query.generacion);
     if (!genId) return res.json([]);
-    // Obtener matrículas ya asignadas (de biUDAT)
     const { recordset: asignados } = await pool.request().query(`SELECT Matricula FROM DormitorioOcupantes WHERE Activo=1`);
     const asignadosSet = new Set(asignados.map(a => a.Matricula));
-    // Obtener alumnos de UDAT
     const rq = poolUDAT.request().input('genId', sql.Int, genId);
     let filtroExtra = '';
     if (req.query.q) { rq.input('q', sql.NVarChar, `%${req.query.q}%`); filtroExtra = ` AND (o.Nombre + ' ' + ISNULL(o.ApellidoPaterno,'') LIKE @q OR o.Matricula LIKE @q)`; }
     const { recordset } = await rq.query(`
-      SELECT DISTINCT o.OperadorId AS Id, o.Matricula,
+      SELECT o.OperadorId AS Id, o.Matricula,
         LTRIM(RTRIM(ISNULL(o.Nombre,'') + ' ' + ISNULL(o.ApellidoPaterno,'') + ' ' + ISNULL(o.ApellidoMaterno,''))) AS NombreCompleto,
-        g.Nombre AS Generacion
+        o.EmpresaId
       FROM dbo.Operador o
-      INNER JOIN dbo.Aplicacion a ON a.OperadorId = o.OperadorId AND a.GeneracionId = @genId AND (a.Eliminado = 0 OR a.Eliminado IS NULL)
-      INNER JOIN dbo.Generacion g ON g.GeneracionId = @genId
       WHERE (o.Eliminado = 0 OR o.Eliminado IS NULL)
+        AND o.OperadorId IN (SELECT OperadorId FROM dbo.Aplicacion WHERE GeneracionId = @genId AND (Eliminado = 0 OR Eliminado IS NULL))
         ${filtroExtra}
       ORDER BY o.Nombre`);
     const filtered = recordset.filter(r => !asignadosSet.has(r.Matricula));
