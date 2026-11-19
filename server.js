@@ -10527,14 +10527,19 @@ app.get('/api/dormitorios/buscar-alumnos', autenticar, async (req, res) => {
     let filtroExtra = '';
     if (req.query.q) { rq.input('q', sql.NVarChar, `%${req.query.q}%`); filtroExtra = ` AND (o.Nombre + ' ' + ISNULL(o.ApellidoPaterno,'') LIKE @q OR o.Matricula LIKE @q)`; }
     const { recordset } = await rq.query(`
+      WITH AplicacionUnica AS (
+        SELECT OperadorId, ROW_NUMBER() OVER (PARTITION BY OperadorId ORDER BY FechaAplicacion DESC) AS rn
+        FROM dbo.Aplicacion WHERE GeneracionId = @genId AND (Eliminado = 0 OR Eliminado IS NULL)
+      )
       SELECT o.OperadorId AS Id, o.Matricula,
         LTRIM(RTRIM(ISNULL(o.Nombre,'') + ' ' + ISNULL(o.ApellidoPaterno,'') + ' ' + ISNULL(o.ApellidoMaterno,''))) AS NombreCompleto,
-        o.EmpresaId
+        ISNULL(emp.Nombre,'') AS Empresa
       FROM dbo.Operador o
+      INNER JOIN AplicacionUnica a ON a.OperadorId = o.OperadorId AND a.rn = 1
+      LEFT JOIN dbo.Empresa emp ON emp.EmpresaId = o.EmpresaId
       WHERE (o.Eliminado = 0 OR o.Eliminado IS NULL)
-        AND o.OperadorId IN (SELECT OperadorId FROM dbo.Aplicacion WHERE GeneracionId = @genId AND (Eliminado = 0 OR Eliminado IS NULL))
         ${filtroExtra}
-      ORDER BY o.Nombre`);
+      ORDER BY o.ApellidoPaterno, o.ApellidoMaterno, o.Nombre`);
     const filtered = recordset.filter(r => !asignadosSet.has(r.Matricula));
     res.json(filtered);
   } catch (e) { res.status(500).json({ error: e.message }); }
