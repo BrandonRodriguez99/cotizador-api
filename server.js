@@ -10703,35 +10703,25 @@ app.get('/api/dormitorios/estadisticas', autenticar, async (req, res) => {
       SELECT AVG(DATEDIFF(hour, FechaCheckIn, ISNULL(FechaCheckOut, GETDATE())) / 24.0) AS PromedioEstanciaDias
       FROM DormitorioOcupantes`);
 
-    // 6. Ocupación por generación (alumnos)
+    // 6. Ocupación por generación (extraída de la matrícula: "UDAT G387 001 P02" → "Generación 387")
     let porGeneracion = [];
-    if (poolUDAT) {
-      try {
-        const alumnosOcup = await pool.request().query(`
-          SELECT Matricula, Activo FROM DormitorioOcupantes WHERE ISNULL(TipoOcupante,'Alumno')='Alumno'`);
-        const matriculas = alumnosOcup.recordset.map(a => a.Matricula).filter(Boolean);
-        if (matriculas.length > 0) {
-          const placeholders = matriculas.map((_, i) => `@m${i}`).join(',');
-          const rqGen = poolUDAT.request();
-          matriculas.forEach((m, i) => rqGen.input(`m${i}`, sql.NVarChar, m));
-          const genData = await rqGen.query(`
-            SELECT o.Matricula, g.Nombre AS Generacion
-            FROM dbo.Operador o
-            INNER JOIN dbo.Generacion g ON g.GeneracionId = o.GeneracionId
-            WHERE o.Matricula IN (${placeholders})`);
-          const genMap = {};
-          genData.recordset.forEach(r => { genMap[r.Matricula] = r.Generacion; });
-          const conteo = {};
-          alumnosOcup.recordset.forEach(a => {
-            const gen = genMap[a.Matricula] || 'Sin generación';
-            if (!conteo[gen]) conteo[gen] = { Generacion: gen, Total: 0, Activos: 0 };
-            conteo[gen].Total++;
-            if (a.Activo) conteo[gen].Activos++;
-          });
-          porGeneracion = Object.values(conteo).sort((a, b) => b.Total - a.Total);
-        }
-      } catch (e) { console.error('Error generaciones dashboard:', e); }
-    }
+    try {
+      const alumnosOcup = await pool.request().query(`
+        SELECT Matricula, Activo FROM DormitorioOcupantes WHERE ISNULL(TipoOcupante,'Alumno')='Alumno'`);
+      const conteo = {};
+      alumnosOcup.recordset.forEach(a => {
+        const match = (a.Matricula || '').match(/G(\d+)/i);
+        const gen = match ? `Generación ${match[1]}` : 'Sin generación';
+        if (!conteo[gen]) conteo[gen] = { Generacion: gen, Total: 0, Activos: 0 };
+        conteo[gen].Total++;
+        if (a.Activo) conteo[gen].Activos++;
+      });
+      porGeneracion = Object.values(conteo).sort((a, b) => {
+        const na = parseInt(a.Generacion.replace(/\D/g, '')) || 0;
+        const nb = parseInt(b.Generacion.replace(/\D/g, '')) || 0;
+        return nb - na;
+      });
+    } catch (e) { console.error('Error generaciones dashboard:', e); }
 
     res.json({
       checkinsPorDia: checkins.recordset,
