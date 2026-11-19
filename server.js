@@ -10507,34 +10507,37 @@ app.get('/api/dormitorios', autenticar, async (req, res) => {
 
 app.get('/api/dormitorios/generaciones', autenticar, async (req, res) => {
   try {
-    const { recordset } = await pool.request().query(`
-      SELECT DISTINCT sNumeroGeneracion AS Generacion
-      FROM dbo.OperacionesUDAT
-      WHERE sNumeroGeneracion IS NOT NULL AND sNumeroGeneracion <> ''
-      ORDER BY sNumeroGeneracion DESC`);
-    res.json(recordset.map(r => r.Generacion));
+    if (!poolUDAT) return res.status(500).json({ error: 'Sin conexión a UDAT' });
+    const { recordset } = await poolUDAT.request().query(`
+      SELECT GeneracionId, Nombre FROM dbo.Generacion ORDER BY Nombre DESC`);
+    res.json(recordset);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.get('/api/dormitorios/buscar-alumnos', autenticar, async (req, res) => {
   try {
-    const q = req.query.q || '';
-    const gen = req.query.generacion || '';
-    if (!gen) return res.json([]);
-    const rq = pool.request().input('gen', sql.NVarChar, gen);
+    if (!poolUDAT) return res.status(500).json({ error: 'Sin conexión a UDAT' });
+    const genId = Number(req.query.generacion);
+    if (!genId) return res.json([]);
+    // Obtener matrículas ya asignadas (de biUDAT)
+    const { recordset: asignados } = await pool.request().query(`SELECT Matricula FROM DormitorioOcupantes WHERE Activo=1`);
+    const asignadosSet = new Set(asignados.map(a => a.Matricula));
+    // Obtener alumnos de UDAT
+    const rq = poolUDAT.request().input('genId', sql.Int, genId);
     let filtroExtra = '';
-    if (q) { rq.input('q', sql.NVarChar, `%${q}%`); filtroExtra = ` AND (sNombre + ' ' + sApellidoP LIKE @q OR sPerfil LIKE @q)`; }
+    if (req.query.q) { rq.input('q', sql.NVarChar, `%${req.query.q}%`); filtroExtra = ` AND (o.Nombre + ' ' + ISNULL(o.ApellidoPaterno,'') LIKE @q OR o.Matricula LIKE @q)`; }
     const { recordset } = await rq.query(`
-      SELECT iIdOperacion AS Id, sPerfil AS Matricula,
-        sNombre + ' ' + sApellidoP + ' ' + ISNULL(sApellidoM,'') AS NombreCompleto,
-        sNumeroGeneracion AS Generacion,
-        CASE iIdEmpresa WHEN 1 THEN 'ALA' WHEN 10 THEN 'LARMEX' ELSE 'Empresa ' + CAST(iIdEmpresa AS VARCHAR) END AS Empresa
-      FROM dbo.OperacionesUDAT
-      WHERE sNumeroGeneracion = @gen
-        AND ISNULL(sPerfil,'') NOT IN (SELECT ISNULL(Matricula,'') FROM DormitorioOcupantes WHERE Activo=1)
+      SELECT DISTINCT o.OperadorId AS Id, o.Matricula,
+        LTRIM(RTRIM(ISNULL(o.Nombre,'') + ' ' + ISNULL(o.ApellidoPaterno,'') + ' ' + ISNULL(o.ApellidoMaterno,''))) AS NombreCompleto,
+        g.Nombre AS Generacion
+      FROM dbo.Operador o
+      INNER JOIN dbo.Aplicacion a ON a.OperadorId = o.OperadorId AND a.GeneracionId = @genId AND (a.Eliminado = 0 OR a.Eliminado IS NULL)
+      INNER JOIN dbo.Generacion g ON g.GeneracionId = @genId
+      WHERE (o.Eliminado = 0 OR o.Eliminado IS NULL)
         ${filtroExtra}
-      ORDER BY sNombre`);
-    res.json(recordset);
+      ORDER BY o.Nombre`);
+    const filtered = recordset.filter(r => !asignadosSet.has(r.Matricula));
+    res.json(filtered);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
