@@ -10550,26 +10550,26 @@ app.get('/api/dormitorios/buscar-operadores', autenticar, async (req, res) => {
     const rq = pool.request();
     if (req.query.q) {
       rq.input('q', sql.NVarChar, `%${req.query.q}%`);
-      filtroExtra = ` AND (o.sNombre + ' ' + ISNULL(o.sApellidoPaterno,'') LIKE @q OR o.sNombre LIKE @q OR CAST(o.iIdOperadorHomologado AS NVARCHAR) LIKE @q)`;
+      filtroExtra = ` AND (o.OperadorNombre LIKE @q OR CAST(o.OperadorHomologadoId AS NVARCHAR) LIKE @q)`;
     }
     if (req.query.empresa) {
       rq.input('emp', sql.Int, parseInt(req.query.empresa));
-      filtroExtra += ` AND o.iIdEmpresa = @emp`;
+      filtroExtra += ` AND o.EmpresaId = @emp`;
     }
     const { recordset } = await rq.query(`
-      SELECT o.iIdOperadorHomologado AS Id,
-        CAST(o.iIdOperadorHomologado AS NVARCHAR) AS Matricula,
-        LTRIM(RTRIM(ISNULL(o.sNombre,'') + ' ' + ISNULL(o.sApellidoPaterno,'') + ' ' + ISNULL(o.sApellidoMaterno,''))) AS NombreCompleto,
-        CASE o.iIdEmpresa
+      SELECT o.OperadorHomologadoId AS Id,
+        CAST(o.OperadorHomologadoId AS NVARCHAR) AS Matricula,
+        o.OperadorNombre AS NombreCompleto,
+        CASE o.EmpresaId
           WHEN 1 THEN 'ALA' WHEN 2 THEN 'TM' WHEN 3 THEN 'TLH'
           WHEN 5 THEN 'TJA' WHEN 6 THEN 'TMI' WHEN 7 THEN 'AT'
           WHEN 8 THEN 'AUTOS' WHEN 9 THEN 'FEM' WHEN 10 THEN 'TLM'
           ELSE 'Otra'
         END AS Empresa,
-        o.iIdEmpresa
+        o.EmpresaId
       FROM STG.OperadoresHomologados o
       WHERE o.BActivo = 1 ${filtroExtra}
-      ORDER BY o.sApellidoPaterno, o.sApellidoMaterno, o.sNombre`);
+      ORDER BY o.OperadorNombre`);
     const filtered = recordset.filter(r => !asignadosSet.has(r.Matricula));
     res.json(filtered);
   } catch (e) { res.status(500).json({ error: e.message }); }
