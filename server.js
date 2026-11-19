@@ -10522,16 +10522,18 @@ app.get('/api/dormitorios/buscar-alumnos', autenticar, async (req, res) => {
     const gen = req.query.generacion || '';
     if (!gen) return res.json([]);
     const rq = pool.request().input('gen', sql.NVarChar, gen);
-    let where = `WHERE (sEstatus IS NULL OR sEstatus NOT LIKE '%Baja%')
-        AND sNumeroGeneracion = @gen
-        AND sPerfil NOT IN (SELECT ISNULL(Matricula,'') FROM DormitorioOcupantes WHERE Activo=1)`;
-    if (q) { rq.input('q', sql.NVarChar, `%${q}%`); where += ` AND (sNombre + ' ' + sApellidoP LIKE @q OR sPerfil LIKE @q)`; }
-    const { recordset } = await rq.query(`SELECT iIdOperacion AS Id, sPerfil AS Matricula,
+    let filtroExtra = '';
+    if (q) { rq.input('q', sql.NVarChar, `%${q}%`); filtroExtra = ` AND (sNombre + ' ' + sApellidoP LIKE @q OR sPerfil LIKE @q)`; }
+    const { recordset } = await rq.query(`
+      SELECT iIdOperacion AS Id, sPerfil AS Matricula,
         sNombre + ' ' + sApellidoP + ' ' + ISNULL(sApellidoM,'') AS NombreCompleto,
         sNumeroGeneracion AS Generacion,
         CASE iIdEmpresa WHEN 1 THEN 'ALA' WHEN 10 THEN 'LARMEX' ELSE 'Empresa ' + CAST(iIdEmpresa AS VARCHAR) END AS Empresa
-        FROM dbo.OperacionesUDAT ${where}
-        ORDER BY sNombre`);
+      FROM dbo.OperacionesUDAT
+      WHERE sNumeroGeneracion = @gen
+        AND ISNULL(sPerfil,'') NOT IN (SELECT ISNULL(Matricula,'') FROM DormitorioOcupantes WHERE Activo=1)
+        ${filtroExtra}
+      ORDER BY sNombre`);
     res.json(recordset);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
