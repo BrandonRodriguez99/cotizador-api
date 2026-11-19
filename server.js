@@ -10703,11 +10703,42 @@ app.get('/api/dormitorios/estadisticas', autenticar, async (req, res) => {
       SELECT AVG(DATEDIFF(hour, FechaCheckIn, ISNULL(FechaCheckOut, GETDATE())) / 24.0) AS PromedioEstanciaDias
       FROM DormitorioOcupantes`);
 
+    // 6. Ocupación por generación (alumnos)
+    let porGeneracion = [];
+    if (poolUDAT) {
+      try {
+        const alumnosOcup = await pool.request().query(`
+          SELECT Matricula, Activo FROM DormitorioOcupantes WHERE ISNULL(TipoOcupante,'Alumno')='Alumno'`);
+        const matriculas = alumnosOcup.recordset.map(a => a.Matricula).filter(Boolean);
+        if (matriculas.length > 0) {
+          const placeholders = matriculas.map((_, i) => `@m${i}`).join(',');
+          const rqGen = poolUDAT.request();
+          matriculas.forEach((m, i) => rqGen.input(`m${i}`, sql.NVarChar, m));
+          const genData = await rqGen.query(`
+            SELECT o.Matricula, g.Nombre AS Generacion
+            FROM dbo.Operador o
+            INNER JOIN dbo.Generacion g ON g.GeneracionId = o.GeneracionId
+            WHERE o.Matricula IN (${placeholders})`);
+          const genMap = {};
+          genData.recordset.forEach(r => { genMap[r.Matricula] = r.Generacion; });
+          const conteo = {};
+          alumnosOcup.recordset.forEach(a => {
+            const gen = genMap[a.Matricula] || 'Sin generación';
+            if (!conteo[gen]) conteo[gen] = { Generacion: gen, Total: 0, Activos: 0 };
+            conteo[gen].Total++;
+            if (a.Activo) conteo[gen].Activos++;
+          });
+          porGeneracion = Object.values(conteo).sort((a, b) => b.Total - a.Total);
+        }
+      } catch (e) { console.error('Error generaciones dashboard:', e); }
+    }
+
     res.json({
       checkinsPorDia: checkins.recordset,
       resumen: resumen.recordset[0],
       topHabitaciones: topHabitaciones.recordset,
       porEmpresa: porEmpresa.recordset,
+      porGeneracion,
       promedioEstanciaDias: estancia.recordset[0]?.PromedioEstanciaDias || 0,
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
