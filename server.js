@@ -10505,6 +10505,37 @@ app.get('/api/dormitorios', autenticar, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+app.get('/api/dormitorios/generaciones', autenticar, async (req, res) => {
+  try {
+    const { recordset } = await pool.request().query(`
+      SELECT DISTINCT sNumeroGeneracion AS Generacion
+      FROM dbo.OperacionesUDAT
+      WHERE sNumeroGeneracion IS NOT NULL AND sNumeroGeneracion <> ''
+      ORDER BY sNumeroGeneracion DESC`);
+    res.json(recordset.map(r => r.Generacion));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/dormitorios/buscar-alumnos', autenticar, async (req, res) => {
+  try {
+    const q = req.query.q || '';
+    const gen = req.query.generacion || '';
+    if (!gen) return res.json([]);
+    const rq = pool.request().input('gen', sql.NVarChar, gen);
+    let where = `WHERE (sEstatus IS NULL OR sEstatus NOT LIKE '%Baja%')
+        AND sNumeroGeneracion = @gen
+        AND sPerfil NOT IN (SELECT ISNULL(Matricula,'') FROM DormitorioOcupantes WHERE Activo=1)`;
+    if (q) { rq.input('q', sql.NVarChar, `%${q}%`); where += ` AND (sNombre + ' ' + sApellidoP LIKE @q OR sPerfil LIKE @q)`; }
+    const { recordset } = await rq.query(`SELECT iIdOperacion AS Id, sPerfil AS Matricula,
+        sNombre + ' ' + sApellidoP + ' ' + ISNULL(sApellidoM,'') AS NombreCompleto,
+        sNumeroGeneracion AS Generacion,
+        CASE iIdEmpresa WHEN 1 THEN 'ALA' WHEN 10 THEN 'LARMEX' ELSE 'Empresa ' + CAST(iIdEmpresa AS VARCHAR) END AS Empresa
+        FROM dbo.OperacionesUDAT ${where}
+        ORDER BY sNombre`);
+    res.json(recordset);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Crear dormitorio
 app.post('/api/dormitorios', autenticar, async (req, res) => {
   try {
@@ -10618,36 +10649,6 @@ app.get('/api/dormitorios/:id/historial', autenticar, async (req, res) => {
 });
 
 // Buscar alumnos OPT para asignar
-app.get('/api/dormitorios/generaciones', autenticar, async (req, res) => {
-  try {
-    const { recordset } = await pool.request().query(`
-      SELECT DISTINCT sNumeroGeneracion AS Generacion
-      FROM dbo.OperacionesUDAT
-      WHERE sNumeroGeneracion IS NOT NULL AND sNumeroGeneracion <> ''
-      ORDER BY sNumeroGeneracion DESC`);
-    res.json(recordset.map(r => r.Generacion));
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.get('/api/dormitorios/buscar-alumnos', autenticar, async (req, res) => {
-  try {
-    const q = req.query.q || '';
-    const gen = req.query.generacion || '';
-    if (!gen) return res.json([]);
-    const rq = pool.request().input('gen', sql.NVarChar, gen);
-    let where = `WHERE (sEstatus IS NULL OR sEstatus NOT LIKE '%Baja%')
-        AND sNumeroGeneracion = @gen
-        AND sPerfil NOT IN (SELECT Matricula FROM DormitorioOcupantes WHERE Activo=1)`;
-    if (q) { rq.input('q', sql.NVarChar, `%${q}%`); where += ` AND (sNombre + ' ' + sApellidoP LIKE @q OR sPerfil LIKE @q)`; }
-    const { recordset } = await rq.query(`SELECT iIdOperacion AS Id, sPerfil AS Matricula,
-        sNombre + ' ' + sApellidoP + ' ' + ISNULL(sApellidoM,'') AS NombreCompleto,
-        sNumeroGeneracion AS Generacion,
-        CASE iIdEmpresa WHEN 1 THEN 'ALA' WHEN 10 THEN 'LARMEX' ELSE 'Empresa ' + CAST(iIdEmpresa AS VARCHAR) END AS Empresa
-        FROM dbo.OperacionesUDAT ${where}
-        ORDER BY sNombre`);
-    res.json(recordset);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
 
 // ─── SERVER ───────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 4000;
