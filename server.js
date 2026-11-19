@@ -10646,6 +10646,73 @@ app.get('/api/dormitorios/detalle-operador', autenticar, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Estadísticas de dormitorios para dashboard
+app.get('/api/dormitorios/estadisticas', autenticar, async (req, res) => {
+  try {
+    const rq = pool.request();
+    // Ocupación por día (últimos 30 días por defecto)
+    const dias = parseInt(req.query.dias) || 30;
+    rq.input('dias', sql.Int, dias);
+
+    // 1. Check-ins por día
+    const checkins = await rq.query(`
+      SELECT CONVERT(VARCHAR(10), FechaCheckIn, 120) AS Fecha,
+        COUNT(*) AS Total,
+        SUM(CASE WHEN ISNULL(TipoOcupante,'Alumno')='Alumno' THEN 1 ELSE 0 END) AS Alumnos,
+        SUM(CASE WHEN ISNULL(TipoOcupante,'Alumno')='Operador' THEN 1 ELSE 0 END) AS Operadores
+      FROM DormitorioOcupantes
+      WHERE FechaCheckIn >= DATEADD(day, -@dias, GETDATE())
+      GROUP BY CONVERT(VARCHAR(10), FechaCheckIn, 120)
+      ORDER BY Fecha`);
+
+    // 2. Resumen general
+    const rq2 = pool.request();
+    const resumen = await rq2.query(`
+      SELECT
+        (SELECT COUNT(*) FROM DormitorioOcupantes WHERE Activo=1) AS HospedadosActuales,
+        (SELECT COUNT(*) FROM DormitorioOcupantes) AS TotalHistorico,
+        (SELECT COUNT(*) FROM DormitorioOcupantes WHERE Activo=1 AND ISNULL(TipoOcupante,'Alumno')='Alumno') AS AlumnosActivos,
+        (SELECT COUNT(*) FROM DormitorioOcupantes WHERE Activo=1 AND ISNULL(TipoOcupante,'Alumno')='Operador') AS OperadoresActivos,
+        (SELECT COUNT(*) FROM Dormitorios WHERE Estado='Disponible' OR (Estado<>'Mantenimiento' AND OcupantesActuales < Capacidad)) AS HabitacionesDisponibles,
+        (SELECT COUNT(*) FROM Dormitorios WHERE Estado='Mantenimiento') AS HabitacionesMantenimiento,
+        (SELECT COUNT(*) FROM Dormitorios) AS TotalHabitaciones,
+        (SELECT SUM(Capacidad) FROM Dormitorios WHERE Estado<>'Mantenimiento') AS CapacidadTotal,
+        (SELECT SUM(OcupantesActuales) FROM Dormitorios) AS OcupacionActual`);
+
+    // 3. Top habitaciones más usadas
+    const rq3 = pool.request();
+    const topHabitaciones = await rq3.query(`
+      SELECT TOP 10 d.Codigo, d.Planta, d.Tipo, COUNT(o.OcupanteId) AS TotalUsos
+      FROM DormitorioOcupantes o
+      INNER JOIN Dormitorios d ON d.DormitorioId = o.DormitorioId
+      GROUP BY d.Codigo, d.Planta, d.Tipo
+      ORDER BY TotalUsos DESC`);
+
+    // 4. Ocupación por empresa
+    const rq4 = pool.request();
+    const porEmpresa = await rq4.query(`
+      SELECT ISNULL(Empresa,'Sin empresa') AS Empresa, COUNT(*) AS Total,
+        SUM(CASE WHEN Activo=1 THEN 1 ELSE 0 END) AS Activos
+      FROM DormitorioOcupantes
+      GROUP BY Empresa
+      ORDER BY Total DESC`);
+
+    // 5. Estancia promedio (en días)
+    const rq5 = pool.request();
+    const estancia = await rq5.query(`
+      SELECT AVG(DATEDIFF(hour, FechaCheckIn, ISNULL(FechaCheckOut, GETDATE())) / 24.0) AS PromedioEstanciaDias
+      FROM DormitorioOcupantes`);
+
+    res.json({
+      checkinsPorDia: checkins.recordset,
+      resumen: resumen.recordset[0],
+      topHabitaciones: topHabitaciones.recordset,
+      porEmpresa: porEmpresa.recordset,
+      promedioEstanciaDias: estancia.recordset[0]?.PromedioEstanciaDias || 0,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Empresas de operadores homologados (para filtro)
 app.get('/api/dormitorios/empresas-operadores', autenticar, async (req, res) => {
   try {
