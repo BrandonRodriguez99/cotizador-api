@@ -10673,11 +10673,11 @@ app.get('/api/dormitorios/estadisticas', autenticar, async (req, res) => {
         (SELECT COUNT(*) FROM DormitorioOcupantes) AS TotalHistorico,
         (SELECT COUNT(*) FROM DormitorioOcupantes WHERE Activo=1 AND ISNULL(TipoOcupante,'Alumno')='Alumno') AS AlumnosActivos,
         (SELECT COUNT(*) FROM DormitorioOcupantes WHERE Activo=1 AND ISNULL(TipoOcupante,'Alumno')='Operador') AS OperadoresActivos,
-        (SELECT COUNT(*) FROM Dormitorios WHERE Estado='Disponible' OR (Estado<>'Mantenimiento' AND OcupantesActuales < Capacidad)) AS HabitacionesDisponibles,
+        (SELECT COUNT(*) FROM Dormitorios d WHERE d.Estado<>'Mantenimiento' AND (SELECT COUNT(*) FROM DormitorioOcupantes WHERE DormitorioId=d.DormitorioId AND Activo=1) < d.Capacidad) AS HabitacionesDisponibles,
         (SELECT COUNT(*) FROM Dormitorios WHERE Estado='Mantenimiento') AS HabitacionesMantenimiento,
         (SELECT COUNT(*) FROM Dormitorios) AS TotalHabitaciones,
         (SELECT SUM(Capacidad) FROM Dormitorios WHERE Estado<>'Mantenimiento') AS CapacidadTotal,
-        (SELECT SUM(OcupantesActuales) FROM Dormitorios) AS OcupacionActual`);
+        (SELECT COUNT(*) FROM DormitorioOcupantes WHERE Activo=1) AS OcupacionActual`);
 
     // 3. Top habitaciones más usadas
     const rq3 = pool.request();
